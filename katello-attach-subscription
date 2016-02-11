@@ -1,0 +1,121 @@
+#!/usr/bin/env ruby
+
+require 'optparse'
+require 'yaml'
+require 'apipie-bindings'
+
+@defaults = {
+  :noop      => false,
+  :uri       => 'https://localhost/',
+  :user      => 'admin',
+  :pass      => 'changeme',
+  :org       => 1,
+}
+
+@options = {
+  :yamlfile  => 'katello-attach-subscription.yaml',
+}
+
+optparse = OptionParser.new do |opts|
+  opts.banner = "Usage: #{opts.program_name} [options]"
+  opts.version = "0.1"
+
+  opts.on("-U", "--uri=URI", "URI to the Satellite") do |u|
+    @options[:uri] = u
+  end
+  opts.on("-u", "--user=USER", "User to log in to Satellite") do |u|
+    @options[:user] = u
+  end
+  opts.on("-p", "--pass=PASS", "Password to log in to Satellite") do |p|
+    @options[:pass] = p
+  end
+  opts.on("-o", "--organization-id=ID", "ID of the Organization") do |o|
+    @options[:org] = o
+  end
+  opts.on("-c", "--config=FILE", "configuration in YAML format") do |c|
+    @options[:yamlfile] = c
+  end
+  opts.on("-n", "--noop", "do not actually execute anything") do
+    @options[:noop] = true
+  end
+end
+optparse.parse!
+
+@yaml = YAML.load_file(@options[:yamlfile])
+
+if @yaml.has_key?(:settings) and @yaml[:settings].is_a?(Hash) then
+  @yaml[:settings].each do |key,val|
+    if not @options.has_key?(key) then
+      @options[key] = val
+    end
+  end
+end
+
+@defaults.each do |key,val|
+  if not @options.has_key?(key) then
+    @options[key] = val
+  end
+end
+
+def vdcupdate()
+  api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2'})
+
+  systems = []
+  page = 0
+  req = nil
+
+  while (page == 0 or req['results'].length == req['per_page'].to_i)
+    page += 1
+    req = api.resource(:systems).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100})
+    systems.concat(req['results'])
+  end
+
+  systems.each do |system|
+    sys = api.resource(:systems).call(:show, {:id => system['id'], :fields => 'full'})
+    next if sys['type'] != 'Hypervisor'
+
+    puts "#{system['name']} (#{system['id']})"
+
+    desired_sub = nil 
+    @yaml[:subs].each do |sub|
+      if sub.has_key?('registered_by') then
+        next if sub['registered_by'] != system['registered_by']
+      end
+      hostnameregex = Regexp.new(sub['hostname'])
+      if hostnameregex.match(system['name']) then
+        desired_sub = sub['sub']
+        break
+      end
+    end
+
+    if desired_sub then
+      has_desired_sub = false
+      req = api.resource(:subscriptions).call(:index, {:organization_id => @options[:org], :system_id => system['id'], :per_page => 100})
+      req['results'].each do |sub|
+        if sub['subscription_id'] == desired_sub then
+          puts " found #{desired_sub}"
+          has_desired_sub = true
+        else
+          puts " removing #{sub['subscription_id']}"
+          if not @options[:noop] then
+            api.resource(:subscriptions).call(:destroy, {:system_id => system['id'], :id => sub['id']})
+            puts " removed"
+          else
+            puts " [noop] removed"
+          end
+        end
+      end
+      if not has_desired_sub then
+        puts " adding #{desired_sub}"
+        if not @options[:noop] then
+          api.resource(:subscriptions).call(:create, {:system_id => system['id'], :subscriptions => [{:id => desired_sub, :quantity => 1}]})
+          puts " added"
+        else
+          puts " [noop] added"
+        end
+      end
+    end
+  end
+end
+
+vdcupdate
