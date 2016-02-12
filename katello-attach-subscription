@@ -43,16 +43,16 @@ optparse.parse!
 
 @yaml = YAML.load_file(@options[:yamlfile])
 
-if @yaml.has_key?(:settings) and @yaml[:settings].is_a?(Hash) then
+if @yaml.has_key?(:settings) and @yaml[:settings].is_a?(Hash)
   @yaml[:settings].each do |key,val|
-    if not @options.has_key?(key) then
+    if not @options.has_key?(key)
       @options[key] = val
     end
   end
 end
 
 @defaults.each do |key,val|
-  if not @options.has_key?(key) then
+  if not @options.has_key?(key)
     @options[key] = val
   end
 end
@@ -78,26 +78,26 @@ def vdcupdate()
 
     desired_sub = nil 
     @yaml[:subs].each do |sub|
-      if sub.has_key?('registered_by') then
+      if sub.has_key?('registered_by')
         next if sub['registered_by'] != system['registered_by']
       end
       hostnameregex = Regexp.new(sub['hostname'])
-      if hostnameregex.match(system['name']) then
+      if hostnameregex.match(system['name'])
         desired_sub = sub['sub']
         break
       end
     end
 
-    if desired_sub then
+    if desired_sub
       has_desired_sub = false
       req = api.resource(:subscriptions).call(:index, {:organization_id => @options[:org], :system_id => system['id'], :per_page => 100})
       req['results'].each do |sub|
-        if sub['subscription_id'] == desired_sub then
+        if sub['subscription_id'] == desired_sub
           puts " found #{desired_sub}"
           has_desired_sub = true
         else
           puts " removing #{sub['subscription_id']}"
-          if not @options[:noop] then
+          if not @options[:noop]
             api.resource(:subscriptions).call(:destroy, {:system_id => system['id'], :id => sub['id']})
             puts " removed"
           else
@@ -105,9 +105,9 @@ def vdcupdate()
           end
         end
       end
-      if not has_desired_sub then
+      if not has_desired_sub
         puts " adding #{desired_sub}"
-        if not @options[:noop] then
+        if not @options[:noop]
           api.resource(:subscriptions).call(:create, {:system_id => system['id'], :subscriptions => [{:id => desired_sub, :quantity => 1}]})
           puts " added"
         else
