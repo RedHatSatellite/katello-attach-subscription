@@ -72,12 +72,16 @@ def vdcupdate()
 
   systems.each do |system|
     sys = api.resource(:systems).call(:show, {:id => system['id'], :fields => 'full'})
-    next if sys['type'] != 'Hypervisor'
-
     puts "#{system['name']} (#{system['id']})"
 
     desired_sub = nil 
     @yaml[:subs].each do |sub|
+      if sub.has_key?('type')
+        next if sys['type'] != sub['type']
+      else
+        next if sys['type'] != 'Hypervisor'
+      end
+
       if sub.has_key?('registered_by')
         next if sub['registered_by'] != system['registered_by']
       end

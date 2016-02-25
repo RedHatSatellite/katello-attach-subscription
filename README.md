@@ -44,11 +44,14 @@ The `settings` section allows to set the same details as the commandline options
       :org: 1
 
 The `subs` section is an array of hashes which describe the subscriptions to be attached.
-Each subscription hash has an `hostname` entry which will be used as an regular expression to match the hostname of the content host in Katello. It also has a `sub` entry, which is the ID of the subscription to be attached to the host. An optional `registered_by` entry can be given to limit the matching to hosts that were submitted by a specific other host.
+Each subscription hash has an `hostname` entry which will be used as an regular expression to match the hostname of the content host in Katello. It also has a `sub` entry, which is the ID of the subscription to be attached to the host. An optional `registered_by` entry can be given to limit the matching to hosts that were submitted by a specific other host. The `type` entry can be set if the host in question is not a hypervisor, but should get a subscription.
 
     :subs:
       - hostname: esxi123\.example\.com
         sub: 4543828edcf35158c30abc3554c1e36a
       - hostname: esxi[0-9]\.example\.com
         registered_by: 85e65e06-a117-4e8e-8aa1-72cb1e00b930
+        sub: b9548e4c9fa20b85f264fbaa2470b726
+      - hostname: machine01\.example.com
+        type: System
         sub: b9548e4c9fa20b85f264fbaa2470b726
