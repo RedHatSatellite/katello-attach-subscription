@@ -75,6 +75,7 @@ def vdcupdate()
     puts "#{system['name']} (#{system['id']})"
 
     desired_sub = nil 
+    remove_other = true
     @yaml[:subs].each do |sub|
       if sub.has_key?('type')
         next if sys['type'] != sub['type']
@@ -88,6 +89,9 @@ def vdcupdate()
       hostnameregex = Regexp.new(sub['hostname'])
       if hostnameregex.match(system['name'])
         desired_sub = sub['sub']
+        if sub.has_key?('remove_other')
+          remove_other = sub['remove_other']
+        end
         break
       end
     end
@@ -99,7 +103,7 @@ def vdcupdate()
         if sub['subscription_id'] == desired_sub
           puts " found #{desired_sub}"
           has_desired_sub = true
-        else
+        elsif remove_other
           puts " removing #{sub['subscription_id']}"
           if not @options[:noop]
             api.resource(:subscriptions).call(:destroy, {:system_id => system['id'], :id => sub['id']})
