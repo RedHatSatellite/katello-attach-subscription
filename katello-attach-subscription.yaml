@@ -2,7 +2,7 @@
 :settings:
   :user: admin
   :pass: changeme
-  :uri: http://localhost
+  :uri: https://localhost
   :org: 1
 :subs:
   - 
