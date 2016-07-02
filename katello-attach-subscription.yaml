@@ -2,12 +2,25 @@
 :settings:
   :user: admin
   :pass: changeme
-  :uri: https://localhost
+  :uri: http://localhost
   :org: 1
 :subs:
-  - hostname: esxi[0-9]\.example\.com
-    registered_by: 85e65e06-a117-4e8e-8aa1-72cb1e00b930
-    sub: b9548e4c9fa20b85f264fbaa2470b726
-  - hostname: esxi123\.example\.com
+  - 
+    hostname: esxi[0-9]\.example\.com
+    registered_by: "85e65e06-a117-4e8e-8aa1-72cb1e00b930"
+    sub:
+      rhel:
+        - 4543828edcf35158c30abc3554c1e36a
+        - 5543828edcf35158c30abc3554c1e36b
+      jboss:
+        - 6543828edcf35158c30abc3554c1e36c
+        - 7543828edcf35158c30abc3554c1e36d
+      satellite:
+        - 7543828edcf35158c30abc3554c1e36e
+  -
+    hostname: esxi123\.example\.com
     registered_by: null
-    sub: 4543828edcf35158c30abc3554c1e36a
+    sub:
+      rhel:
+        - 4543828edcf35158c30abc3554c1e36a
+

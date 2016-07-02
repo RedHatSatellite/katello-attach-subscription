@@ -15,9 +15,12 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
 # MA 02110-1301, USA.
 
+require 'rubygems'
+require 'bundler/setup'
 require 'optparse'
 require 'yaml'
 require 'apipie-bindings'
+#require 'pry'
 
 @defaults = {
   :noop      => false,
@@ -25,6 +28,8 @@ require 'apipie-bindings'
   :user      => 'admin',
   :pass      => 'changeme',
   :org       => 1,
+  :usecache  => false,
+  :cachefile => 'katello-attach-subscription.cache',
 }
 
 @options = {
@@ -53,6 +58,12 @@ optparse = OptionParser.new do |opts|
   opts.on("-n", "--noop", "do not actually execute anything") do
     @options[:noop] = true
   end
+  opts.on("--use-cache", "use cache file") do
+    @options[:usecache] = true
+  end
+  opts.on("--cache-file=FILE", "read or write to cache file, based on --use-cache value") do |cf|
+    @options[:cachefile] = cf
+  end
 end
 optparse.parse!
 
@@ -73,68 +84,142 @@ end
 end
 
 def vdcupdate()
+  # create api binding
   api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2'})
 
+  # initialize variables
   systems = []
   page = 0
   req = nil
 
-  while (page == 0 or req['results'].length == req['per_page'].to_i)
-    page += 1
-    req = api.resource(:systems).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100})
-    systems.concat(req['results'])
+  # fill systems array from API of satellite
+  # check if page == 0 and not last page
+  if @options[:usecache]
+    # TODO need sanity check, what if file do not exits? what if value are not valid?
+    systems = YAML.load_file(@options[:cachefile])
+  else
+    while (page == 0 or req['results'].length == req['per_page'].to_i)
+      # increase page counter
+      page += 1
+      # get 100 results
+      # filter to be applied: organization
+      req = api.resource(:systems).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100})
+      # concatenate output - all of the results
+      systems.concat(req['results'])
+    end
+    File.open(@options[:cachefile], 'w') {|f| f.write(YAML.dump(systems)) }
   end
 
+  # cycle for each system
   systems.each do |system|
+    # get detail for each system
     sys = api.resource(:systems).call(:show, {:id => system['id'], :fields => 'full'})
+    # add to array system the name of the system itself taken from id
     puts "#{system['name']} (#{system['id']})"
 
+    has_desired_sub = nil 
+    #has_desired_sub_hash = []
+    #has_desired_sub_hash = Hash.new([])
     desired_sub = nil 
+    desired_sub_hash = nil
+    desired_type = 'Hypervisor'
     remove_other = true
+    # for each item in yaml extract sub
+    #p @yaml
     @yaml[:subs].each do |sub|
+      # if "type" has been specified on yaml file check if match.
+      # the default is to check on "Hypervisor"
+      # if DO NOT match, skip to next sub
       if sub.has_key?('type')
-        next if sys['type'] != sub['type']
-      else
-        next if sys['type'] != 'Hypervisor'
+        desired_type = sub['type']
+      end
+      if sys['type'] != desired_type
+        puts "Skipping '#{system['name']}' as type '#{sys['type']}' != '#{desired_type}'"
+        next
       end
 
+      #p sys['type']
+
       if sub.has_key?('registered_by')
-        next if sub['registered_by'] != system['registered_by']
+        if sub['registered_by'] != system['registered_by']
+          puts "Skipping '#{system['name']}' as registered_by '#{sub['registered_by']}' != '#{system['registered_by']}'"
+          next
+        end
       end
+      # extract the name of the host to be registered
       hostnameregex = Regexp.new(sub['hostname'])
+      STDERR.puts sub['hostname'].inspect
+      STDERR.puts hostnameregex.inspect
+      # check against the current system item
       if hostnameregex.match(system['name'])
-        desired_sub = sub['sub']
+        # set the desidered subscription to be associated
+        desired_sub_hash = sub['sub']
+        # if "remove_other" has been set, set the flag
         if sub.has_key?('remove_other')
           remove_other = sub['remove_other']
         end
+        # stop cyclyng over yaml, 
         break
       end
     end
 
-    if desired_sub
-      has_desired_sub = false
+    #p desired_sub_hash
+
+    # check if any hosts has a match
+    if desired_sub_hash
+      puts "in the desidered"
+      has_desired_sub_hash = {}
+      # check the current subscription associated
       req = api.resource(:subscriptions).call(:index, {:organization_id => @options[:org], :system_id => system['id'], :per_page => 100})
-      req['results'].each do |sub|
-        if sub['subscription_id'] == desired_sub
-          puts " found #{desired_sub}"
-          has_desired_sub = true
-        elsif remove_other
-          puts " removing #{sub['subscription_id']}"
-          if not @options[:noop]
-            api.resource(:subscriptions).call(:destroy, {:system_id => system['id'], :id => sub['id']})
-            puts " removed"
-          else
-            puts " [noop] removed"
+      # we need to check for each product the needed subs
+      desired_sub_hash.each do |product, desidered_product_sub_array|
+        puts "in the desired_sub_hash #{desidered_product_sub_array}"
+        has_desired_sub = false
+        # for each subscription do
+        req['results'].each do |sub|
+          #p sub['subscription_id']
+          if desidered_product_sub_array.include?(sub['subscription_id'])
+            puts " not found #{desidered_product_sub_array} already associated, #{sub['subscription_id']}"
+            #has_desired_sub_hash << desired_product_sub_array
+            has_desired_sub = true
+          # else, if this is not the one desidered, and remove_other is set, remove the current subscription
+          elsif remove_other
+            puts " removing #{sub['subscription_id']}"
+            if not @options[:noop]
+              api.resource(:subscriptions).call(:destroy, {:system_id => system['id'], :id => sub['id']})
+              puts " removed"
+            else
+              puts " [noop] removed"
+            end
           end
         end
+        if not has_desired_sub
+          puts "sub for product missing"
+          has_desired_sub_hash[product] = desidered_product_sub_array
+        end
       end
-      if not has_desired_sub
-        puts " adding #{desired_sub}"
-        if not @options[:noop]
-          api.resource(:subscriptions).call(:create, {:system_id => system['id'], :subscriptions => [{:id => desired_sub, :quantity => 1}]})
-          puts " added"
-        else
-          puts " [noop] added"
+ 
+     puts "#{has_desired_sub_hash}"
+
+      # if the content host do not has subscrition, or the "needed" one, attach it
+      if has_desired_sub_hash
+        has_desired_sub_hash.each do |product, desired_subs_hash|
+          puts " adding #{desired_subs_hash} for #{product}"
+          desired_subs_hash.each do |desired_sub|
+            if not @options[:noop]
+              begin
+                api.resource(:subscriptions).call(:create, {:system_id => system['id'], :subscriptions => [{:id => desired_sub, :quantity => 1}]})
+                puts " added #{desired_sub} for #{product}"
+                break
+              # need to check the return code and if fail go to next licence in the pool
+              rescue
+                next
+              end
+            else
+              puts " [noop] added #{desired_sub} for #{product}"
+              break
+            end
+          end
         end
       end
     end
