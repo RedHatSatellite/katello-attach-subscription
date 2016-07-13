@@ -123,7 +123,7 @@ def vdcupdate()
           puts " found #{desired_sub}"
           has_desired_sub = true
         elsif remove_other
-          puts " removing #{sub['subscription_id']}"
+          puts " removing #{sub['id']}"
           if not @options[:noop]
             if api.has_resource?(:host_subscriptions)
               api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['host_id'], :subscriptions => [{:id => sub['id']}]})
