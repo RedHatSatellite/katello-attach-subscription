@@ -113,15 +113,23 @@ def vdcupdate()
 
     if desired_sub
       has_desired_sub = false
-      req = api.resource(:subscriptions).call(:index, {:organization_id => @options[:org], :system_id => system['id'], :per_page => 100})
+      if api.has_resource?(:host_subscriptions)
+        req = api.resource(:host_subscriptions).call(:index, {:organization_id => @options[:org], :host_id => system['host_id'], :per_page => 100})
+      else
+        req = api.resource(:subscriptions).call(:index, {:organization_id => @options[:org], :system_id => system['id'], :per_page => 100})
+      end
       req['results'].each do |sub|
-        if sub['subscription_id'] == desired_sub
+        if (sub.has_key?('subscription_id') and sub['subscription_id'] == desired_sub) or (sub.has_key?('cp_id') and sub['cp_id'] == desired_sub)
           puts " found #{desired_sub}"
           has_desired_sub = true
         elsif remove_other
           puts " removing #{sub['subscription_id']}"
           if not @options[:noop]
-            api.resource(:subscriptions).call(:destroy, {:system_id => system['id'], :id => sub['id']})
+            if api.has_resource?(:host_subscriptions)
+              api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['host_id'], :subscriptions => [{:id => sub['id']}]})
+            else
+              api.resource(:subscriptions).call(:destroy, {:system_id => system['id'], :id => sub['id']})
+            end
             puts " removed"
           else
             puts " [noop] removed"
@@ -129,9 +137,16 @@ def vdcupdate()
         end
       end
       if not has_desired_sub
-        puts " adding #{desired_sub}"
+        res = api.resource(:subscriptions).call(:show, {:id => desired_sub, :organization_id => @options[:org]})
+        desired_sub_id = res['id']
+        puts " adding #{desired_sub} (id: #{desired_sub_id})"
+
         if not @options[:noop]
-          api.resource(:subscriptions).call(:create, {:system_id => system['id'], :subscriptions => [{:id => desired_sub, :quantity => 1}]})
+          if api.has_resource?(:host_subscriptions)
+            api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['host_id'], :subscriptions => [{:id => desired_sub_id, :quantity => 1}]})
+          else
+            api.resource(:subscriptions).call(:create, {:system_id => system['id'], :subscriptions => [{:id => desired_sub, :quantity => 1}]})
+          end
           puts " added"
         else
           puts " [noop] added"
