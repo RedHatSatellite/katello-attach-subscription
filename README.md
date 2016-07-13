@@ -9,7 +9,7 @@ automatically assign subscriptions to hypervisors based on certain rules
 When run, `katello-attach-subscription` will execute the following steps:
 
 * Iterate over all content hosts of type `Hypervisor` of your organization
-* Search for a subscription that matches by hostname and (optionally) by the submitter
+* Search for a subscription that matches by hostname and (optionally) by the submitter (usually identified by the UUID of the `virt-who` instance)
 * If such a subscription is found:
     * ensure that it is attached to the content host
     * and all other subscriptions are removed from it
