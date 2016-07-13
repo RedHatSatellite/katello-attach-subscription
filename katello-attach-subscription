@@ -98,7 +98,7 @@ def vdcupdate()
         next if sys['type'] != 'Hypervisor'
       end
 
-      if sub.has_key?('registered_by')
+      if sub.has_key?('registered_by') and sub['registered_by']
         next if sub['registered_by'] != system['registered_by']
       end
       hostnameregex = Regexp.new(sub['hostname'])
