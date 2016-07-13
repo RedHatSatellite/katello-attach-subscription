@@ -21,6 +21,7 @@ require 'apipie-bindings'
 
 @defaults = {
   :noop      => false,
+  :used_hypervisors_only => false,
   :uri       => 'https://localhost/',
   :user      => 'admin',
   :pass      => 'changeme',
@@ -53,6 +54,9 @@ optparse = OptionParser.new do |opts|
   opts.on("-n", "--noop", "do not actually execute anything") do
     @options[:noop] = true
   end
+  opts.on("-H", "--used-hypervisors-only", "only search for hypervisors that are in use") do
+    @options[:used_hypervisors_only] = true
+  end
 end
 optparse.parse!
 
@@ -79,9 +83,15 @@ def vdcupdate()
   page = 0
   req = nil
 
+  if @options[:used_hypervisors_only]
+    search = 'virtual_guests:*'
+  else
+    search = nil
+  end
+
   while (page == 0 or req['results'].length == req['per_page'].to_i)
     page += 1
-    req = api.resource(:systems).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100})
+    req = api.resource(:systems).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100, :search => search})
     systems.concat(req['results'])
   end
 
