@@ -26,6 +26,7 @@ require 'apipie-bindings'
   :user      => 'admin',
   :pass      => 'changeme',
   :org       => 1,
+  :search    => nil,
 }
 
 @options = {
@@ -57,6 +58,9 @@ optparse = OptionParser.new do |opts|
   opts.on("-H", "--used-hypervisors-only", "only search for hypervisors that are in use") do
     @options[:used_hypervisors_only] = true
   end
+  opts.on("-s", "--search=SEARCH", "search for machines matching this string only") do |s|
+    @options[:search] = s
+  end
 end
 optparse.parse!
 
@@ -86,7 +90,7 @@ def vdcupdate()
   if @options[:used_hypervisors_only]
     search = 'virtual_guests:*'
   else
-    search = nil
+    search = @options[:search]
   end
 
   while (page == 0 or req['results'].length == req['per_page'].to_i)
