@@ -23,6 +23,7 @@ require 'apipie-bindings'
   :noop      => false,
   :used_hypervisors_only => false,
   :uri       => 'https://localhost/',
+  :timeout   => 300,
   :user      => 'admin',
   :pass      => 'changeme',
   :org       => 1,
@@ -39,6 +40,9 @@ optparse = OptionParser.new do |opts|
 
   opts.on("-U", "--uri=URI", "URI to the Satellite") do |u|
     @options[:uri] = u
+  end
+  opts.on("-t", "--timeout=TIMEOUT", OptionParser::DecimalInteger, "Timeout value in seconds for any API calls. -1 means never timeout") do |t|
+    @options[:timeout] = t
   end
   opts.on("-u", "--user=USER", "User to log in to Satellite") do |u|
     @options[:user] = u
@@ -81,7 +85,7 @@ end
 end
 
 def vdcupdate()
-  api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2'})
+  api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]})
 
   systems = []
   page = 0
