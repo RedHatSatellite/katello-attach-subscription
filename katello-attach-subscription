@@ -88,6 +88,7 @@ def vdcupdate()
   api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]})
 
   systems = []
+  subs = {}
   page = 0
   req = nil
 
@@ -155,15 +156,17 @@ def vdcupdate()
         end
       end
       if not has_desired_sub
-        res = api.resource(:subscriptions).call(:show, {:id => desired_sub, :organization_id => @options[:org]})
-        desired_sub_id = res['id']
+        subs[desired_sub] ||= api.resource(:subscriptions).call(:show, {:id => desired_sub, :organization_id => @options[:org]})
+        desired_sub_id = subs[desired_sub]['id']
         desired_quantity = 1
-        if desired_quantity > res['available'].to_i
+        if desired_quantity > subs[desired_sub]['available'].to_i
           puts " cannot add #{desired_sub} (id: #{desired_sub_id}): only #{res['available']} available, but #{desired_quantity} requested"
           next
         end
         puts " adding #{desired_sub} (id: #{desired_sub_id})"
 
+        subs[desired_sub]['available'] -= desired_quantity
+        subs[desired_sub]['consumed'] += desired_quantity
         if not @options[:noop]
           if api.has_resource?(:host_subscriptions)
             api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['host_id'], :subscriptions => [{:id => desired_sub_id, :quantity => desired_quantity}]})
