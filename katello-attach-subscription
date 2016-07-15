@@ -157,11 +157,16 @@ def vdcupdate()
       if not has_desired_sub
         res = api.resource(:subscriptions).call(:show, {:id => desired_sub, :organization_id => @options[:org]})
         desired_sub_id = res['id']
+        desired_quantity = 1
+        if desired_quantity > res['available'].to_i
+          puts " cannot add #{desired_sub} (id: #{desired_sub_id}): only #{res['available']} available, but #{desired_quantity} requested"
+          next
+        end
         puts " adding #{desired_sub} (id: #{desired_sub_id})"
 
         if not @options[:noop]
           if api.has_resource?(:host_subscriptions)
-            api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['host_id'], :subscriptions => [{:id => desired_sub_id, :quantity => 1}]})
+            api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['host_id'], :subscriptions => [{:id => desired_sub_id, :quantity => desired_quantity}]})
           else
             api.resource(:subscriptions).call(:create, {:system_id => system['id'], :subscriptions => [{:id => desired_sub, :quantity => 1}]})
           end
