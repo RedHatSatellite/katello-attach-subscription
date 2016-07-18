@@ -9,7 +9,7 @@ automatically assign subscriptions to hypervisors based on certain rules
 When run, `katello-attach-subscription` will execute the following steps:
 
 * Iterate over all content hosts of type `Hypervisor` of your organization
-* Search for a subscription that matches by hostname and (optionally) by the submitter
+* Search for a subscription that matches by hostname and (optionally) by the submitter (usually identified by the UUID of the `virt-who` instance)
 * If such a subscription is found:
     * ensure that it is attached to the content host
     * and all other subscriptions are removed from it
@@ -44,7 +44,7 @@ The `settings` section allows to set the same details as the commandline options
       :org: 1
 
 The `subs` section is an array of hashes which describe the subscriptions to be attached.
-Each subscription hash has an `hostname` entry which will be used as an regular expression to match the hostname of the content host in Katello. It also has a `sub` entry, which is the ID of the subscription to be attached to the host. An optional `registered_by` entry can be given to limit the matching to hosts that were submitted by a specific other host. The `type` entry can be set if the host in question is not a hypervisor, but should get a subscription.
+Each subscription hash has an `hostname` entry which will be used as an regular expression to match the hostname of the content host in Katello. It also has a `sub` entry, which is the RedHat Pool ID of the subscription to be attached to the host. An optional `registered_by` entry can be given to limit the matching to hosts that were submitted by a specific other host (a value of `null` or `~` skips check). The `type` entry can be set if the host in question is not a hypervisor, but should get a subscription.
 
     :subs:
       - hostname: esxi123\.example\.com

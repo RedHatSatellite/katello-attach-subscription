@@ -25,11 +25,13 @@ require 'apipie-bindings'
 @defaults = {
   :noop      => false,
   :uri       => 'https://localhost/',
+  :timeout   => 300,
   :user      => 'admin',
   :pass      => 'changeme',
   :org       => 1,
   :usecache  => false,
   :cachefile => 'katello-attach-subscription.cache',
+  :search    => nil,
 }
 
 @options = {
@@ -42,6 +44,9 @@ optparse = OptionParser.new do |opts|
 
   opts.on("-U", "--uri=URI", "URI to the Satellite") do |u|
     @options[:uri] = u
+  end
+  opts.on("-t", "--timeout=TIMEOUT", OptionParser::DecimalInteger, "Timeout value in seconds for any API calls. -1 means never timeout") do |t|
+    @options[:timeout] = t
   end
   opts.on("-u", "--user=USER", "User to log in to Satellite") do |u|
     @options[:user] = u
@@ -57,6 +62,12 @@ optparse = OptionParser.new do |opts|
   end
   opts.on("-n", "--noop", "do not actually execute anything") do
     @options[:noop] = true
+  end
+  opts.on("-H", "--used-hypervisors-only", "only search for hypervisors that are in use") do
+    @options[:search] = 'virtual_guests:*'
+  end
+  opts.on("-s", "--search=SEARCH", "search for machines matching this string only") do |s|
+    @options[:search] = s
   end
   opts.on("--use-cache", "use cache file") do
     @options[:usecache] = true
@@ -85,10 +96,11 @@ end
 
 def vdcupdate()
   # create api binding
-  api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2'})
+  api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]})
 
   # initialize variables
   systems = []
+  subs = {}
   page = 0
   req = nil
 
@@ -103,7 +115,7 @@ def vdcupdate()
       page += 1
       # get 100 results
       # filter to be applied: organization
-      req = api.resource(:systems).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100})
+      req = api.resource(:systems).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100, :search => @options[:search]})
       # concatenate output - all of the results
       systems.concat(req['results'])
     end
@@ -140,7 +152,7 @@ def vdcupdate()
 
       #p sys['type']
 
-      if sub.has_key?('registered_by')
+      if sub.has_key?('registered_by') and sub['registered_by']
         if sub['registered_by'] != system['registered_by']
           puts "Skipping '#{system['name']}' as registered_by '#{sub['registered_by']}' != '#{system['registered_by']}'"
           next
@@ -170,23 +182,34 @@ def vdcupdate()
       puts "in the desidered"
       has_desired_sub_hash = {}
       # check the current subscription associated
-      req = api.resource(:subscriptions).call(:index, {:organization_id => @options[:org], :system_id => system['id'], :per_page => 100})
+      if api.has_resource?(:host_subscriptions)
+        req = api.resource(:host_subscriptions).call(:index, {:organization_id => @options[:org], :host_id => system['host_id'], :per_page => 100})
+      else
+        req = api.resource(:subscriptions).call(:index, {:organization_id => @options[:org], :system_id => system['id'], :per_page => 100})
+      end
       # we need to check for each product the needed subs
       desired_sub_hash.each do |product, desidered_product_sub_array|
         puts "in the desired_sub_hash #{desidered_product_sub_array}"
         has_desired_sub = false
         # for each subscription do
         req['results'].each do |sub|
-          #p sub['subscription_id']
-          if desidered_product_sub_array.include?(sub['subscription_id'])
-            puts " not found #{desidered_product_sub_array} already associated, #{sub['subscription_id']}"
+          #p sub['id']
+	  if (sub.has_key?('subscription_id')
+	    sub[:cp_id] = sub.delete(:subscription_id)
+	  end
+          if desidered_product_sub_array.include?(sub['cp_id'])
+            puts " not found #{desidered_product_sub_array} already associated, #{sub['cp_id']}"
             #has_desired_sub_hash << desired_product_sub_array
             has_desired_sub = true
           # else, if this is not the one desidered, and remove_other is set, remove the current subscription
           elsif remove_other
-            puts " removing #{sub['subscription_id']}"
+            puts " removing #{sub['cp_id']}"
             if not @options[:noop]
-              api.resource(:subscriptions).call(:destroy, {:system_id => system['id'], :id => sub['id']})
+              if api.has_resource?(:host_subscriptions)
+                api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['host_id'], :subscriptions => [{:id => sub['id']}]})
+              else
+                api.resource(:subscriptions).call(:destroy, {:system_id => system['id'], :id => sub['id']})
+              end
               puts " removed"
             else
               puts " [noop] removed"
@@ -204,11 +227,26 @@ def vdcupdate()
       # if the content host do not has subscrition, or the "needed" one, attach it
       if has_desired_sub_hash
         has_desired_sub_hash.each do |product, desired_subs_hash|
-          puts " adding #{desired_subs_hash} for #{product}"
+          subs[desired_sub] ||= api.resource(:subscriptions).call(:show, {:id => desired_sub, :organization_id => @options[:org]})
+          desired_sub_id = subs[desired_sub]['id']
+          desired_quantity = 1
+          if desired_quantity > subs[desired_sub]['available'].to_i
+            puts " cannot add #{desired_sub} (id: #{desired_sub_id}): only #{res['available']} available, but #{desired_quantity} requested"
+            next
+          end
+          puts " adding #{desired_subs_hash} for #{product} (id: #{desired_sub_id})"
+
+          subs[desired_sub]['available'] -= desired_quantity
+          subs[desired_sub]['consumed'] += desired_quantity
+
           desired_subs_hash.each do |desired_sub|
             if not @options[:noop]
               begin
-                api.resource(:subscriptions).call(:create, {:system_id => system['id'], :subscriptions => [{:id => desired_sub, :quantity => 1}]})
+                if api.has_resource?(:host_subscriptions)
+                  api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['host_id'], :subscriptions => [{:id => desired_sub_id, :quantity => desired_quantity}]})
+                else
+                  api.resource(:subscriptions).call(:create, {:system_id => system['id'], :subscriptions => [{:id => desired_sub, :quantity => 1}]})
+                end
                 puts " added #{desired_sub} for #{product}"
                 break
               # need to check the return code and if fail go to next licence in the pool

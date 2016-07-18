@@ -19,7 +19,6 @@
         - 7543828edcf35158c30abc3554c1e36e
   -
     hostname: esxi123\.example\.com
-    registered_by: null
     sub:
       rhel:
         - 4543828edcf35158c30abc3554c1e36a
