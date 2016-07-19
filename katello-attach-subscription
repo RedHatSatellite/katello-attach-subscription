@@ -194,9 +194,9 @@ def vdcupdate()
         # for each subscription do
         req['results'].each do |sub|
           #p sub['id']
-	  if (sub.has_key?('subscription_id')
-	    sub[:cp_id] = sub.delete(:subscription_id)
-	  end
+          if (sub.has_key?('subscription_id')
+            sub[:cp_id] = sub.delete(:subscription_id)
+          end
           if desidered_product_sub_array.include?(sub['cp_id'])
             puts " not found #{desidered_product_sub_array} already associated, #{sub['cp_id']}"
             #has_desired_sub_hash << desired_product_sub_array
