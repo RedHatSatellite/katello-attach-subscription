@@ -27,6 +27,7 @@ require 'apipie-bindings'
   :pass      => 'changeme',
   :org       => 1,
   :search    => nil,
+  :reports   => false,
 }
 
 @options = {
@@ -169,6 +170,19 @@ def vdcupdate()
           puts " added"
         else
           puts " [noop] added"
+        end
+      end
+      # set foreman reporting to true/false
+      if api.has_resource?(:hosts)
+        if api.resource(:hosts).call(:show, {:id => system['host_id']})['enabled'] != @options[:reports]
+          if not @options[:noop]
+            api.resource(:hosts).call(:update, {:id => system['host_id'], :host => {:enabled => @options[:reports]}})
+            puts " foreman reporting set to #{@options[:reports]}"
+          else
+            puts " [noop] foreman reporting set to #{@options[:reports]}"
+          end
+        else
+          puts " foreman reporting already set to #{@options[:reports]}"
         end
       end
     end
