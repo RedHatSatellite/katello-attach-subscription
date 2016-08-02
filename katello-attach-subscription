@@ -104,8 +104,11 @@ end
 
 # main function
 def vdcupdate()
-  # TODO add sanity check for https. If the url is http the following will error will be shoun in production.log
-  # 2016-07-27 19:30:17 [I] Filter chain halted as #<Proc:0x00000007d88298@/opt/rh/ruby193/root/usr/share/gems/gems/actionpack-3.2.8/lib/action_controller/metal/force_ssl.rb:28> rendered or redirected
+  # satellite url has to start with https or PUT will fail with http error
+  unless @options[:uri].start_with?('https://')
+    puts " FATAL ERROR: the uri must start with https://"
+    exit fail
+  end
 
   # create api binding
   api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]})
@@ -115,12 +118,16 @@ def vdcupdate()
   subs = {}
   page = 0
   req = nil
+  cachefile = @options[:cachefile] + "_org" + @options[:org]
 
   # Fill systems array from API of satellite. Check for cache usage.
-  if @options[:usecache] and File.file?(@options[:cachefile])
-    # TODO need sanity check, what if file do not exits? what if value are not valid?
-    # TODO use one cache file for each organization, otherwise cache is broken
-    systems = YAML.load_file(@options[:cachefile])
+  if @options[:usecache] and File.file?(cachefile)
+    begin
+      systems = YAML.load_file(cachefile)
+    rescue Exception
+      puts " FATAL ERROR: Failed to read cache file. re-run without --use-cache."
+      exit false
+    end
   else
     # no cache wanted or no cache file exists
     # checking all of the systems 100 at the time, from page 0 to latest
@@ -134,11 +141,18 @@ def vdcupdate()
       systems.concat(req['results'])
     end
     # always write the cache file, even if not asked, to be used in the future
-    File.open(@options[:cachefile], 'w') {|f| f.write(YAML.dump(systems)) }
+    File.open(cachefile, 'w') {|f| f.write(YAML.dump(systems)) }
   end
 
   # cycle for each system found
   systems.each do |system|
+    # initialize variable
+    has_desired_sub = nil 
+    desired_sub = nil 
+    desired_sub_hash = nil
+    desired_type = 'Hypervisor'
+    remove_other = true
+
     # get detail for each system
     if @options[:debug]
       puts "DEBUG: detail of the current system to be checked:"
@@ -148,11 +162,6 @@ def vdcupdate()
     # add to array system the name of the system itself taken from id
     puts "Current system: #{system['name']} (#{system['id']})"
 
-    has_desired_sub = nil 
-    desired_sub = nil 
-    desired_sub_hash = nil
-    desired_type = 'Hypervisor'
-    remove_other = true
     # for each item in yaml extract sub
     if @options[:debug]
       puts "DEBUG: YAML dump"
@@ -166,7 +175,7 @@ def vdcupdate()
         desired_type = sub['type']
       end
       if sys['type'] != desired_type
-        puts "Skipping '#{system['name']}' as type '#{sys['type']}' != '#{desired_type}'"
+        puts "Skipping '#{system['name']}' as system type '#{sys['type']}' is different from desired '#{desired_type}'"
         next
       end
 
@@ -175,7 +184,7 @@ def vdcupdate()
       # if DO NOT match, skip to next sub
       if sub.has_key?('registered_by') and sub['registered_by']
         if sub['registered_by'] != system['registered_by']
-          puts "Skipping '#{system['name']}' as the system has registered_by '#{system['registered_by']}' while '#{sub['registered_by']}' is requested"
+          puts "Skipping '#{system['name']}' as the system registered_by '#{system['registered_by']}' is different from desired '#{sub['registered_by']}'"
           next
         end
       end
@@ -185,7 +194,8 @@ def vdcupdate()
       if @options[:debug]
         puts "DEBUG: Current host: '#{sub['hostname'].inspect}', looking for pattern '#{hostnameregex.inspect}'"
       end
-      # check against the current system item
+
+      # check if the current system match the desired one
       if hostnameregex.match(system['name'])
         # set the desidered subscription to be associated
         desired_sub_hash = sub['sub']
@@ -198,52 +208,46 @@ def vdcupdate()
       end
     end
 
-    # check if any hosts has a match
+    # check if one or more hosts need a subscription
     if @options[:debug]
       puts "DEBUG: desired_sub_hash value"
       p desired_sub_hash
     end
     if desired_sub_hash
-      puts " Adding subscription for #{system system['id']}"
+      puts " Adding subscription for #{system['id']}"
       has_desired_sub_hash = {}
-      # check the current subscription associated to one system
+      # check the current associated subscription to this system
       if api.has_resource?(:host_subscriptions)
         req = api.resource(:host_subscriptions).call(:index, {:organization_id => @options[:org], :host_id => system['host_id'], :per_page => 100})
       else
         req = api.resource(:subscriptions).call(:index, {:organization_id => @options[:org], :system_id => system['id'], :per_page => 100})
       end
-      # we need to check for each product the needed subs
+      # for every product (hash key in yaml) check the desired subs
       desired_sub_hash.each do |product, desidered_product_sub_array|
         puts "in the desired_sub_hash #{desidered_product_sub_array}"
         has_desired_sub = false
-        # for each subscription do
+        # check a single subscription in the array
         req['results'].each do |sub|
-          if @options[:debug]
-            puts "DEBUG: current sub"
-            p sub
-          end
-          # move subscription_id key to cp_id, to have the API standard
+          # move subscription_id key to cp_id, to have a standard API interface
           if (sub.has_key?('subscription_id'))
             sub['cp_id'] = sub.delete('subscription_id')
           end
           if @options[:debug]
-            puts "DEBUG: sub after modification of cp_id"
+            puts "DEBUG: subscription detail"
             p sub
-            #p desidered_product_sub_array
-            #p desired_sub_hash
             p desired_sub_hash.flatten(2)
           end
           # WORKAROUND even if checking the current array of licence is correct, from a formal point of view, using multiple product 
           # because of this bug, currently we are looking for the sub_id into the full hash, since this is unique
           #if desidered_product_sub_array.include?(sub['cp_id'])
           if desired_sub_hash.flatten(2).include?(sub['cp_id'])
-            #puts " the desired subscriptio #{sub['cp_id']} for #{product} product is already associated in the list of subscriptions valid for this product #{desidered_product_sub_array}"
+            #puts " the desired subscription #{sub['cp_id']} for #{product} product is already associated in the list of subscriptions valid for this product #{desidered_product_sub_array}"
             puts " subscription #{sub['cp_id']} for #{product} product is already attached to #{system['id']}"
             #has_desired_sub_hash << desired_product_sub_array
             has_desired_sub = true
-          # else, if this is not the one desidered, and remove_other is set, remove the current subscription
+          # else, if this is not the subscription desidered and remove_other is set, remove this subscription to the system
           elsif remove_other and sub['cp_id'] != nil
-            puts " removing #{sub['cp_id']}"
+            puts " removing subscription #{sub['cp_id']} from system #{system['id']}"
             if not @options[:noop]
               if api.has_resource?(:host_subscriptions)
                 api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['host_id'], :subscriptions => [{:id => sub['id']}]})
@@ -256,8 +260,9 @@ def vdcupdate()
             end
           end
         end
+        # if all of the subscriptions marked for this product is missing, mark it to be added
         if not has_desired_sub
-          puts "sub for product " + product.to_s + " currently missing"
+          puts "Subscription for product " + product.to_s + " currently missing. Set for the attach."
           has_desired_sub_hash[product] = desidered_product_sub_array
         end
       end
@@ -266,50 +271,49 @@ def vdcupdate()
        puts "DEBUG: has_desired_sub_hash: #{has_desired_sub_hash}"
      end
 
-      # if the content host do not has subscrition, or the "needed" one, attach it
+      # if the system do not has proper subscritions, attach it
       if has_desired_sub_hash
+        # cycle for each product
         has_desired_sub_hash.each do |product, desired_subs_hash|
+          # cycle for each subscription
           desired_subs_hash.each do |desired_sub|
-
             if @options[:debug]
               puts "DEBUG: current subscription to be checked"
               p desired_sub
             end
-            # if the subs do not exist, the following error is given, with error 400 on API
-            # 2016-07-27 16:43:19 [E] RestClient::ResourceNotFound: Katello::Resources::Candlepin::Pool: 404 Resource Not Found {"displayMessage":"Pool with id 4543828edcf35158c30abc3554c1e36a could not be found.","requestUuid":"d9b83468-0ef7-4d59-940b-7b50e98520dc"} (GET /candlepin/pools/4543828edcf35158c30abc3554c1e36a)
+            # if subs[desired_sub] is false, retrieve the current subscription detail
+            # this will retrieve the sub detail only once for each sub
             subs[desired_sub] ||= api.resource(:subscriptions).call(:show, {:id => desired_sub, :organization_id => @options[:org]})
-            # TODO ADD id in the array and a check before to call show only if the hash is not populated
-            desired_sub_id = subs[desired_sub]['id']
-            # TODO where Satellite may report the socket number, do the math
+            # Currently Satellite do not know for Hypervisor ESXi type the number of the socket. Set to 1.
             desired_quantity = 1
+            # if there are not enough available subscriptions check the next available
             if desired_quantity > subs[desired_sub]['available'].to_i
-              puts " cannot add #{desired_sub} (id: #{desired_sub_id}): only #{res['available']} available, but #{desired_quantity} requested"
+              puts " cannot add #{desired_sub} (id: #{subs[desired_sub]['id']}): only #{subs[desired_sub]['available']} available, but #{desired_quantity} requested"
               next
             end
-            puts " adding #{desired_sub} for #{product} (id: #{desired_sub_id})"
+            # if requirements are met, add the subscription
+            puts " adding #{desired_sub} for #{product} (id: #{subs[desired_sub]['id']})"
   
+            # fix the number of the available and consumed subscription because this will be retrieved only once
             subs[desired_sub]['available'] -= desired_quantity
             subs[desired_sub]['consumed'] += desired_quantity
 
             if not @options[:noop]
               begin
                 if api.has_resource?(:host_subscriptions)
-                  api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['host_id'], :subscriptions => [{:id => desired_sub_id, :quantity => desired_quantity}]})
+                  api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['host_id'], :subscriptions => [{:id => subs[desired_sub]['id'], :quantity => desired_quantity}]})
                 else
                   api.resource(:subscriptions).call(:create, {:system_id => system['id'], :subscriptions => [{:id => desired_sub, :quantity => desired_quantity}]})
                 end
                 puts " added #{desired_sub} for #{product} in system #{system['id']}"
+                # stop cycling over the subscription available since the first available has been added
                 break
-              # need to check the return code and if fail go to next licence in the pool
+              # in case of error adding the subscription, stop the process
               rescue Exception => e
-                puts "FATAL ERROR: unable to attach subscription, please inform developers"
+                puts " ERROR: unable to attach subscription"
                 puts e.message
                 puts e.backtrace.inspect
-                exit
-                #if @options[:debug]
-                #  puts "unable to attach subscription, do be debugged"
-                  #end
-                next
+                exit fail
               end
             else
               puts " [noop] added #{desired_sub} for #{product} in system #{system['id']}"
