@@ -51,3 +51,4 @@ Gemfile.lock
 
 # project specific
 katello-attach-subscription.cache
+katello-attach-subscription.yaml
