@@ -1,2 +1,7 @@
 gem 'apipie-bindings'
-gem 'pry-nav', group: [:development, :test]
+group :development do
+  gem 'pry-nav'
+  gem 'pry-rescue'
+  gem 'pry-stack_explorer'
+  gem 'awesome_print'
+end
