@@ -118,7 +118,7 @@ def vdcupdate()
   subs = {}
   page = 0
   req = nil
-  cachefile = @options[:cachefile] + "_org" + @options[:org]
+  cachefile = @options[:cachefile].to_s + "_org" + @options[:org].to_s
 
   # Fill systems array from API of satellite. Check for cache usage.
   if @options[:usecache] and File.file?(cachefile)
