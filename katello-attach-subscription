@@ -216,16 +216,16 @@ def vdcupdate()
     if desired_sub_hash
       puts " Adding subscription for #{system['id']}"
       has_desired_sub_hash = {}
-      # check the current associated subscription to this system
-      if api.has_resource?(:host_subscriptions)
-        req = api.resource(:host_subscriptions).call(:index, {:organization_id => @options[:org], :host_id => system['host_id'], :per_page => 100})
-      else
-        req = api.resource(:subscriptions).call(:index, {:organization_id => @options[:org], :system_id => system['id'], :per_page => 100})
-      end
       # for every product (hash key in yaml) check the desired subs
       desired_sub_hash.each do |product, desidered_product_sub_array|
         puts "in the desired_sub_hash #{desidered_product_sub_array}"
         has_desired_sub = false
+        # check the current associated subscription to this system
+        if api.has_resource?(:host_subscriptions)
+          req = api.resource(:host_subscriptions).call(:index, {:organization_id => @options[:org], :host_id => system['host_id'], :per_page => 100})
+        else
+          req = api.resource(:subscriptions).call(:index, {:organization_id => @options[:org], :system_id => system['id'], :per_page => 100})
+        end
         # check a single subscription in the array
         req['results'].each do |sub|
           # move subscription_id key to cp_id, to have a standard API interface
@@ -282,13 +282,21 @@ def vdcupdate()
               p desired_sub
             end
             # if subs[desired_sub] is false, retrieve the current subscription detail
-            # this will retrieve the sub detail only once for each sub
-            subs[desired_sub] ||= api.resource(:subscriptions).call(:show, {:id => desired_sub, :organization_id => @options[:org]})
+            begin
+              # this will retrieve the sub detail only once for each sub
+              subs[desired_sub] ||= api.resource(:subscriptions).call(:show, {:id => desired_sub, :organization_id => @options[:org]})
+            # in case of error adding the subscription, stop the process
+            rescue Exception => e
+              puts " ERROR: unable to retrieve subscription #{desired_sub}"
+              puts e.message
+              puts e.backtrace.inspect
+              exit fail
+            end
             # Currently Satellite do not know for Hypervisor ESXi type the number of the socket. Set to 1.
             desired_quantity = 1
             # if there are not enough available subscriptions check the next available
             if desired_quantity > subs[desired_sub]['available'].to_i
-              puts " cannot add #{desired_sub} (id: #{subs[desired_sub]['id']}): only #{subs[desired_sub]['available']} available, but #{desired_quantity} requested"
+              puts " cannot add subscription #{desired_sub} (id: #{subs[desired_sub]['id']}): only #{subs[desired_sub]['available']} available, but #{desired_quantity} requested"
               next
             end
             # if requirements are met, add the subscription
