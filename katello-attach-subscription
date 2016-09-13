@@ -106,8 +106,7 @@ end
 def vdcupdate()
   # satellite url has to start with https or PUT will fail with http error
   unless @options[:uri].start_with?('https://')
-    puts " FATAL ERROR: the uri must start with https://"
-    exit fail
+    abort " FATAL ERROR: the uri must start with https://"
   end
 
   # create api binding
@@ -125,8 +124,7 @@ def vdcupdate()
     begin
       systems = YAML.load_file(cachefile)
     rescue Exception
-      puts " FATAL ERROR: Failed to read cache file. re-run without --use-cache."
-      exit false
+      abort " FATAL ERROR: Failed to read cache file. re-run without --use-cache."
     end
   else
     # no cache wanted or no cache file exists
@@ -241,9 +239,7 @@ def vdcupdate()
           # because of this bug, currently we are looking for the sub_id into the full hash, since this is unique
           #if desidered_product_sub_array.include?(sub['cp_id'])
           if desired_sub_hash.flatten(2).include?(sub['cp_id'])
-            #puts " the desired subscription #{sub['cp_id']} for #{product} product is already associated in the list of subscriptions valid for this product #{desidered_product_sub_array}"
             puts " subscription #{sub['cp_id']} for #{product} product is already attached to #{system['id']}"
-            #has_desired_sub_hash << desired_product_sub_array
             has_desired_sub = true
           # else, if this is not the subscription desidered and remove_other is set, remove this subscription to the system
           elsif remove_other and sub['cp_id'] != nil

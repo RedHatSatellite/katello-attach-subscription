@@ -1,3 +1,5 @@
+# taken from https://github.com/github/gitignore/blob/master/Ruby.gitignore
+# for original licence of this file check https://github.com/github/gitignore/blob/master/LICENSE
 *.gem
 *.rbc
 /.config
