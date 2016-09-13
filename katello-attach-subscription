@@ -286,7 +286,7 @@ def vdcupdate()
               puts " ERROR: unable to retrieve subscription #{desired_sub}"
               puts e.message
               puts e.backtrace.inspect
-              exit fail
+              exit 1
             end
             # Currently Satellite do not know for Hypervisor ESXi type the number of the socket. Set to 1.
             desired_quantity = 1
@@ -317,7 +317,7 @@ def vdcupdate()
                 puts " ERROR: unable to attach subscription"
                 puts e.message
                 puts e.backtrace.inspect
-                exit fail
+                exit 1
               end
             else
               puts " [noop] added #{desired_sub} for #{product} in system #{system['id']}"
