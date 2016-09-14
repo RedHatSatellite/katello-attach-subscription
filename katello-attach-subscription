@@ -233,7 +233,7 @@ def vdcupdate()
           # move subscription_id key to cp_id, to have a standard API interface
           # Katello 2.2 do not have cp_id, in subscription_id there is the id of the sub
           # Katello 3.0 has cp_id with the id of the sub (to be confirmed) and subscription_id populated with an integer
-          if sub.has_key?('subscription_id') and !(sub.has_key?('cp_id')) and !(sub.subscription_id.is_a)
+          if sub.has_key?('subscription_id') and !(sub.has_key?('cp_id')) and !(sub.subscription_id.is_a?(Integer))
             sub['cp_id'] = sub.delete('subscription_id')
           end
           if @options[:debug]
