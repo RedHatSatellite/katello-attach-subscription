@@ -212,11 +212,15 @@ def vdcupdate()
       p desired_sub_hash
     end
     if desired_sub_hash
-      puts " Adding subscription for #{system['id']}"
+      if @options[:debug]
+        puts " Checking subscription for #{system['id']}"
+      end
       has_desired_sub_hash = {}
       # for every product (hash key in yaml) check the desired subs
       desired_sub_hash.each do |product, desidered_product_sub_array|
-        puts "in the desired_sub_hash #{desidered_product_sub_array}"
+        if @options[:debug]
+          puts "in the desired_sub_hash #{desidered_product_sub_array}"
+        end
         has_desired_sub = false
         # check the current associated subscription to this system
         if api.has_resource?(:host_subscriptions)
@@ -227,7 +231,9 @@ def vdcupdate()
         # check a single subscription in the array
         req['results'].each do |sub|
           # move subscription_id key to cp_id, to have a standard API interface
-          if (sub.has_key?('subscription_id'))
+          # Katello 2.2 do not have cp_id, in subscription_id there is the id of the sub
+          # Katello 3.0 has cp_id with the id of the sub (to be confirmed) and subscription_id populated with an integer
+          if sub.has_key?('subscription_id') and !(sub.has_key?('cp_id')) and !(sub.subscription_id.is_a)
             sub['cp_id'] = sub.delete('subscription_id')
           end
           if @options[:debug]
@@ -237,7 +243,6 @@ def vdcupdate()
           end
           # WORKAROUND even if checking the current array of licence is correct, from a formal point of view, using multiple product 
           # because of this bug, currently we are looking for the sub_id into the full hash, since this is unique
-          #if desidered_product_sub_array.include?(sub['cp_id'])
           if desired_sub_hash.flatten(2).include?(sub['cp_id'])
             puts " subscription #{sub['cp_id']} for #{product} product is already attached to #{system['id']}"
             has_desired_sub = true
