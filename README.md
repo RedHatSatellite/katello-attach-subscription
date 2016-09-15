@@ -19,15 +19,19 @@ When run, `katello-attach-subscription` will execute the following steps:
 * [Ruby](https://www.ruby-lang.org/)
 * [Apipie Bindings](https://github.com/Apipie/apipie-bindings)
 
-
 ## Options
 
-* `-U`, `--uri=URI` URI to the Satellite
+* `-U`, `--uri=URI` URI to the Satellite, this must be https
 * `-u`, `--user=USER` User to log in to Satellite
 * `-p`, `--pass=PASS` Password to log in to Satellite
 * `-o`, `--organization-id=ID` ID of the Organization
 * `-c`, `--config=FILE` configuration in YAML format
 * `-n`, `--noop` do not actually execute anything
+* `-H`, `--used-hypervisors-only` only search for hypervisors that are in use
+* `-s`, `--search=SEARCH` only search for hypervisors that are in use
+* `--use-cache` read systems from the cache
+* `--cache-file=FILE` set the cache file for reading and writing
+* `-d`, `--debug` show debug code during execution
 
 ## Configuration
 
@@ -42,16 +46,44 @@ The `settings` section allows to set the same details as the commandline options
       :pass: changeme
       :uri: https://localhost
       :org: 1
+      :cachefile: 'katello-attach-subscription.cache'
+
+The `cachefile` is meant to run this program in a faster way because retrieving all of the systems can require huge time.
+The `cachefile` will be written each time, while if `--use-cache` is specified on command line it will be readed and will skip systems extraction.
 
 The `subs` section is an array of hashes which describe the subscriptions to be attached.
-Each subscription hash has an `hostname` entry which will be used as an regular expression to match the hostname of the content host in Katello. It also has a `sub` entry, which is the RedHat Pool ID of the subscription to be attached to the host. An optional `registered_by` entry can be given to limit the matching to hosts that were submitted by a specific other host (a value of `null` or `~` skips check). The `type` entry can be set if the host in question is not a hypervisor, but should get a subscription.
+Each subscription hash has an `hostname` entry which will be used as an regular expression to match the hostname of the content host in Katello.
+It also has a `sub` entry, which is an hash of array.
+The hash has product as key, which is a string to identify the type of subscription, and the content is an array of RedHat Pool ID of subscription to be attached to the host.
+An optional `registered_by` entry can be given to limit the matching to hosts that were submitted by a specific other host (a value of `null` or `~` skips check). This is the uid of the system running `virt-who` that has registered the `hostname` in Satellite.
+The `type` entry can be set if the host in question is not a hypervisor, but should get a subscription.
 
     :subs:
-      - hostname: esxi123\.example\.com
-        sub: 4543828edcf35158c30abc3554c1e36a
-      - hostname: esxi[0-9]\.example\.com
-        registered_by: 85e65e06-a117-4e8e-8aa1-72cb1e00b930
-        sub: b9548e4c9fa20b85f264fbaa2470b726
-      - hostname: machine01\.example.com
+      - 
+        hostname: esxi[0-9]\.example\.com
+        registered_by: "85e65e06-a117-4e8e-8aa1-72cb1e00b930"
+        sub:
+          rhel:
+            - 4543828edcf35158c30abc3554c1e36a
+            - 5543828edcf35158c30abc3554c1e36b
+          jboss:
+            - 6543828edcf35158c30abc3554c1e36c
+            - 7543828edcf35158c30abc3554c1e36d
+          satellite:
+            - 7543828edcf35158c30abc3554c1e36e
+      -
+        hostname: esxi123\.example\.com
+        sub:
+          rhel:
+            - 4543828edcf35158c30abc3554c1e36a
+      -
+        hostname: machine01\.example.com
         type: System
-        sub: b9548e4c9fa20b85f264fbaa2470b726
+        sub:
+          rhel:
+            - b9548e4c9fa20b85f264fbaa2470b726
+
+## Caveats
+
+Currently Satellite is not able to save fact that contain the socket number. Candlepin 2.0 (bug to be linked) and `Virt-who` 0.16 are needed `https://bugzilla.redhat.com/show_bug.cgi?id=1307024`.
+Assumption that only 1 sub is needed is done currently.
