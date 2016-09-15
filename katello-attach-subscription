@@ -268,9 +268,9 @@ def vdcupdate()
         end
       end
  
-     if @options[:debug]
-       puts "DEBUG: has_desired_sub_hash: #{has_desired_sub_hash}"
-     end
+      if @options[:debug]
+        puts "DEBUG: has_desired_sub_hash: #{has_desired_sub_hash}"
+      end
 
       # if the system do not has proper subscritions, attach it
       if has_desired_sub_hash
