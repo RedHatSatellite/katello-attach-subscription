@@ -166,27 +166,6 @@ def vdcupdate()
       p @yaml
     end
     @yaml[:subs].each do |sub|
-      # if "type" has been specified on yaml file check if match.
-      # the default is to check on "Hypervisor"
-      # if DO NOT match, skip to next sub
-      if sub.has_key?('type')
-        desired_type = sub['type']
-      end
-      if sys['type'] != desired_type
-        puts "Skipping '#{system['name']}' as system type '#{sys['type']}' is different from desired '#{desired_type}'"
-        next
-      end
-
-      # if "registered_by" has been specified on yaml file check if match.
-      # the default is to not check it, any value will be good
-      # if DO NOT match, skip to next sub
-      if sub.has_key?('registered_by') and sub['registered_by']
-        if sub['registered_by'] != system['registered_by']
-          puts "Skipping '#{system['name']}' as the system registered_by '#{system['registered_by']}' is different from desired '#{sub['registered_by']}'"
-          next
-        end
-      end
-
       # extract the name of the host to be registered
       hostnameregex = Regexp.new(sub['hostname'])
       if @options[:debug]
@@ -195,6 +174,27 @@ def vdcupdate()
 
       # check if the current system match the desired one
       if hostnameregex.match(system['name'])
+        # if "type" has been specified on yaml file check if match.
+        # the default is to check on "Hypervisor"
+        # if DO NOT match, skip to next sub
+        if sub.has_key?('type')
+          desired_type = sub['type']
+        end
+        if sys['type'] != desired_type
+          puts "Skipping '#{system['name']}' as system type '#{sys['type']}' is different from desired '#{desired_type}'"
+          next
+        end
+
+        # if "registered_by" has been specified on yaml file check if match.
+        # the default is to not check it, any value will be good
+        # if DO NOT match, skip to next sub
+        if sub.has_key?('registered_by') and sub['registered_by']
+          if sub['registered_by'] != system['registered_by']
+            puts "Skipping '#{system['name']}' as the system registered_by '#{system['registered_by']}' is different from desired '#{sub['registered_by']}'"
+            next
+          end
+        end
+
         # set the desidered subscription to be associated
         desired_sub_hash = sub['sub']
         # if "remove_other" has been set, set the flag
