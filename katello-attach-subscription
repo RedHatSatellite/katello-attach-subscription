@@ -151,6 +151,7 @@ def vdcupdate()
     desired_type = 'Hypervisor'
     remove_other = true
     remove_subs = []
+    auto_attach = false
 
     # get detail for each system
     if @options[:debug]
@@ -205,6 +206,10 @@ def vdcupdate()
         # if "remove_subs" has been set, use it
         if sub.has_key?('remove_subs')
           remove_subs = sub['remove_subs']
+        end
+        # if "auto_attach" has been set, set the flag
+        if sub.has_key?('auto_attach')
+          auto_attach = sub['auto_attach']
         end
         # if the system is found, stop cyclyng over yaml, 
         break
@@ -335,6 +340,15 @@ def vdcupdate()
             end
           end
         end
+      end
+
+      if auto_attach
+         puts " auto-attaching subs to system #{system['id']}"
+         if not @options[:noop]
+           api.resource(:systems).call(:refresh_subscriptions, {:id =>  system['id']})
+         else
+           puts " [noop] auto-attached"
+         end
       end
     end
   end
