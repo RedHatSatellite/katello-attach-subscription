@@ -239,16 +239,17 @@ def vdcupdate()
       end
     end
 
-    if not desired_sub_hash
-      desired_sub_hash = {'none' => []}
-    end
-
     # check if one or more hosts need a subscription
     if @options[:debug]
       puts "DEBUG: desired_sub_hash value"
       p desired_sub_hash
     end
-    if desired_sub_hash
+    if desired_sub_hash or not remove_subs.empty?
+      # maybe we do not have any subs to add, but remove_subs was not empty
+      if not desired_sub_hash
+        desired_sub_hash = {'none' => []}
+      end
+
       if @options[:debug]
         puts " Checking subscription for #{system['id']}"
       end
