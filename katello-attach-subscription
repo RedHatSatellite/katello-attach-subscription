@@ -152,6 +152,7 @@ def vdcupdate()
     remove_other = true
     remove_subs = []
     auto_attach = false
+    virtual_host = nil
 
     # get detail for each system
     if @options[:debug]
@@ -174,6 +175,12 @@ def vdcupdate()
         puts "DEBUG: Current host: '#{sub['hostname'].inspect}', looking for pattern '#{hostnameregex.inspect}'"
       end
 
+      # extract the (possible) virtual_host
+      if sub.has_key?('virtual_host')
+        virtualhostregex = Regexp.new(sub['virtual_host'])
+      else
+        virtualhostregex = nil
+      end
       # check if the current system match the desired one
       if hostnameregex.match(system['name'])
         # if "type" has been specified on yaml file check if match.
@@ -194,6 +201,20 @@ def vdcupdate()
           if sub['registered_by'] != system['registered_by']
             puts "Skipping '#{system['name']}' as the system registered_by '#{system['registered_by']}' is different from desired '#{sub['registered_by']}'"
             next
+          end
+        end
+
+        # check if we have a virtual_host
+        if virtualhostregex
+          system_details = api.resource(:systems).call(:show, {:organization_id => @options[:org], :id => system['id'], :fields => 'full'})
+          if system_details.has_key?('avirtual_host')
+            if not virtualhostregex.match(system_details['virtual_host']['name'])
+              puts "Skipping '#{system['name']}' as the system should be on #{sub['virtual_host']} but it is on #{system_details['virtual_host']['name']}"
+              next
+            end
+          else
+             puts "Skipping '#{system['name']}' as the system should have a virtual host, but it does not."
+             next
           end
         end
 
