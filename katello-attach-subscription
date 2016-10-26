@@ -198,7 +198,9 @@ def vdcupdate()
         end
 
         # set the desidered subscription to be associated
-        desired_sub_hash = sub['sub']
+        if sub.has_key?('sub')
+          desired_sub_hash = sub['sub']
+        end
         # if "remove_other" has been set, set the flag
         if sub.has_key?('remove_other')
           remove_other = sub['remove_other']
@@ -214,6 +216,10 @@ def vdcupdate()
         # if the system is found, stop cyclyng over yaml, 
         break
       end
+    end
+
+    if not desired_sub_hash
+      desired_sub_hash = {'none' => []}
     end
 
     # check if one or more hosts need a subscription
@@ -272,7 +278,7 @@ def vdcupdate()
           end
         end
         # if all of the subscriptions marked for this product is missing, mark it to be added
-        if not has_desired_sub
+        if not desidered_product_sub_array.empty? and not has_desired_sub
           puts "Subscription for product " + product.to_s + " currently missing. Set for the attach."
           has_desired_sub_hash[product] = desidered_product_sub_array
         end
