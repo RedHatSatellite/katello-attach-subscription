@@ -114,6 +114,7 @@ def vdcupdate()
 
   # initialize variables
   systems = []
+  system_details = {}
   subs = {}
   page = 0
   req = nil
@@ -206,10 +207,10 @@ def vdcupdate()
 
         # check if we have a virtual_host
         if virtualhostregex
-          system_details = api.resource(:systems).call(:show, {:organization_id => @options[:org], :id => system['id'], :fields => 'full'})
-          if system_details.has_key?('avirtual_host')
-            if not virtualhostregex.match(system_details['virtual_host']['name'])
-              puts "Skipping '#{system['name']}' as the system should be on #{sub['virtual_host']} but it is on #{system_details['virtual_host']['name']}"
+          system_details[system['id']] ||= api.resource(:systems).call(:show, {:organization_id => @options[:org], :id => system['id'], :fields => 'full'})
+          if system_details[system['id']].has_key?('avirtual_host')
+            if not virtualhostregex.match(system_details[system['id']]['virtual_host']['name'])
+              puts "Skipping '#{system['name']}' as the system should be on #{sub['virtual_host']} but it is on #{system_details[system['id']]['virtual_host']['name']}"
               next
             end
           else
