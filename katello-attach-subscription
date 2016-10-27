@@ -123,7 +123,9 @@ def vdcupdate()
   # Fill systems array from API of satellite. Check for cache usage.
   if @options[:usecache] and File.file?(cachefile)
     begin
-      systems = YAML.load_file(cachefile)
+      cacheyaml = YAML.load_file(cachefile)
+      systems = cacheyaml['systems']
+      system_details = cacheyaml['system_details']
     rescue Exception
       abort " FATAL ERROR: Failed to read cache file. re-run without --use-cache."
     end
@@ -139,8 +141,6 @@ def vdcupdate()
       # concatenate output - all of the results
       systems.concat(req['results'])
     end
-    # always write the cache file, even if not asked, to be used in the future
-    File.open(cachefile, 'w') {|f| f.write(YAML.dump(systems)) }
   end
 
   # cycle for each system found
@@ -380,6 +380,11 @@ def vdcupdate()
          end
       end
     end
+  end
+
+  if not @options[:usecache]
+    # always write the cache file at the end, to be used in the future
+    File.open(cachefile, 'w') {|f| f.write(YAML.dump({'systems' => systems, 'system_details' => system_details})) }
   end
 end
 
