@@ -208,7 +208,7 @@ def vdcupdate()
         # check if we have a virtual_host
         if virtualhostregex
           system_details[system['id']] ||= api.resource(:systems).call(:show, {:organization_id => @options[:org], :id => system['id'], :fields => 'full'})
-          if system_details[system['id']].has_key?('virtual_host')
+          if system_details[system['id']].has_key?('virtual_host') and system_details[system['id']]['virtual_host'] and system_details[system['id']]['virtual_host'].has_key?('name')
             if not virtualhostregex.match(system_details[system['id']]['virtual_host']['name'])
               puts "Skipping '#{system['name']}' as the system should be on #{sub['virtual_host']} but it is on #{system_details[system['id']]['virtual_host']['name']}"
               next
