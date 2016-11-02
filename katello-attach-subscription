@@ -370,15 +370,15 @@ def vdcupdate()
           end
         end
       end
+    end
 
-      if auto_attach
-         puts " auto-attaching subs to system #{system['id']}"
-         if not @options[:noop]
-           api.resource(:systems).call(:refresh_subscriptions, {:id =>  system['id']})
-         else
-           puts " [noop] auto-attached"
-         end
-      end
+    if auto_attach
+       puts " auto-attaching subs to system #{system['id']}"
+       if not @options[:noop]
+         api.resource(:systems).call(:refresh_subscriptions, {:id =>  system['id']})
+       else
+         puts " [noop] auto-attached"
+       end
     end
   end
 
