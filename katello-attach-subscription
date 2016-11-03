@@ -340,7 +340,7 @@ def vdcupdate()
             # Currently Satellite do not know for Hypervisor ESXi type the number of the socket. Set to 1.
             desired_quantity = 1
             # if there are not enough available subscriptions check the next available
-            if desired_quantity > subs[desired_sub]['available'].to_i
+            if desired_quantity > subs[desired_sub]['available'].to_i and subs[desired_sub]['quantity'].to_i != -1
               puts " cannot add subscription #{desired_sub} (id: #{subs[desired_sub]['id']}): only #{subs[desired_sub]['available']} available, but #{desired_quantity} requested"
               next
             end
