@@ -152,6 +152,7 @@ def vdcupdate()
     desired_type = 'Hypervisor'
     remove_other = true
     remove_subs = []
+    keep_subs = []
     auto_attach = false
     keep_virt_only = false
     virtual_host = nil
@@ -232,6 +233,10 @@ def vdcupdate()
         if sub.has_key?('remove_subs')
           remove_subs = sub['remove_subs']
         end
+        # if "keep_subs" has been set, use it
+        if sub.has_key?('keep_subs')
+          keep_subs = sub['keep_subs']
+        end
         # if "auto_attach" has been set, set the flag
         if sub.has_key?('auto_attach')
           auto_attach = sub['auto_attach']
@@ -291,7 +296,7 @@ def vdcupdate()
             has_desired_sub = true
           # else, if this is not among the desired subscriptions (ALL of them, not only the current product)
           # and remove_other is set, remove this subscription to the system
-          elsif sub['cp_id'] != nil and not desired_sub_hash.flatten(2).include?(sub['cp_id']) and (remove_other or remove_subs.include?(sub['cp_id'])) and not (keep_virt_only and sub.has_key?('virt_only') and sub['virt_only'])
+          elsif sub['cp_id'] != nil and not desired_sub_hash.flatten(2).include?(sub['cp_id']) and (remove_other or remove_subs.include?(sub['cp_id'])) and not (keep_virt_only and sub.has_key?('virt_only') and sub['virt_only']) and not keep_subs.include?(sub['cp_id'])
             puts " removing subscription #{sub['cp_id']} from system #{system['id']}"
             if not @options[:noop]
               if api.has_resource?(:host_subscriptions)
