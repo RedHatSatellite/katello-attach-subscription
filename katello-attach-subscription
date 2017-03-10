@@ -112,6 +112,17 @@ def vdcupdate()
   # create api binding
   api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]})
 
+  req = api.resource(:home).call(:status)
+  if Gem::Version.new(req['version']) >= Gem::Version.new('1.11')
+    @host_resource = :hosts
+    @default_type = nil
+    @supports_registered_by = false
+  else
+    @host_resource = :systems
+    @default_type = 'Hypervisor'
+    @supports_registered_by = true
+  end
+
   # initialize variables
   systems = []
   system_details = {}
@@ -137,7 +148,7 @@ def vdcupdate()
       page += 1
       # get 100 results
       # filter to be applied: organization, and search options
-      req = api.resource(:systems).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100, :search => @options[:search]})
+      req = api.resource(@host_resource).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100, :search => @options[:search]})
       # concatenate output - all of the results
       systems.concat(req['results'])
     end
@@ -149,7 +160,7 @@ def vdcupdate()
     has_desired_sub = nil 
     desired_sub = nil 
     desired_sub_hash = nil
-    desired_type = 'Hypervisor'
+    desired_type = @default_type
     remove_other = true
     remove_subs = []
     keep_subs = []
@@ -162,7 +173,7 @@ def vdcupdate()
       puts "DEBUG: detail of the current system to be checked:"
       p system
     end
-    sys = api.resource(:systems).call(:show, {:id => system['id'], :fields => 'full'})
+    sys = api.resource(@host_resource).call(:show, {:id => system['id'], :fields => 'full'})
     # add to array system the name of the system itself taken from id
     puts "Current system: #{system['name']} (#{system['id']})"
 
@@ -189,10 +200,11 @@ def vdcupdate()
         # if "type" has been specified on yaml file check if match.
         # the default is to check on "Hypervisor"
         # if DO NOT match, skip to next sub
+        # fixme: can't find this detail in new API
         if sub.has_key?('type')
           desired_type = sub['type']
         end
-        if sys['type'] != desired_type
+        if @default_type and sys['type'] != desired_type
           puts "Skipping '#{system['name']}' as system type '#{sys['type']}' is different from desired '#{desired_type}'"
           next
         end
@@ -200,7 +212,8 @@ def vdcupdate()
         # if "registered_by" has been specified on yaml file check if match.
         # the default is to not check it, any value will be good
         # if DO NOT match, skip to next sub
-        if sub.has_key?('registered_by') and sub['registered_by']
+        # fixme: can't find this detail in new API
+        if sub.has_key?('registered_by') and sub['registered_by'] and @supports_registered_by
           if sub['registered_by'] != system['registered_by']
             puts "Skipping '#{system['name']}' as the system registered_by '#{system['registered_by']}' is different from desired '#{sub['registered_by']}'"
             next
@@ -209,10 +222,17 @@ def vdcupdate()
 
         # check if we have a virtual_host
         if virtualhostregex
-          system_details[system['id']] ||= api.resource(:systems).call(:show, {:organization_id => @options[:org], :id => system['id'], :fields => 'full'})
+          system_details[system['id']] ||= api.resource(@host_resource).call(:show, {:organization_id => @options[:org], :id => system['id'], :fields => 'full'})
+          # fixme: look at subscription_facet_attributes
+          virtual_host_name = nil
           if system_details[system['id']].has_key?('virtual_host') and system_details[system['id']]['virtual_host'] and system_details[system['id']]['virtual_host'].has_key?('name')
-            if not virtualhostregex.match(system_details[system['id']]['virtual_host']['name'])
-              puts "Skipping '#{system['name']}' as the system should be on #{sub['virtual_host']} but it is on #{system_details[system['id']]['virtual_host']['name']}"
+            virtual_host_name = system_details[system['id']]['virtual_host']['name']
+          elsif system_details[system['id']].has_key?('subscription_facet_attributes') and system_details[system['id']]['subscription_facet_attributes'] and system_details[system['id']]['subscription_facet_attributes'].has_key?('virtual_host') and system_details[system['id']]['subscription_facet_attributes']['virtual_host'] and system_details[system['id']]['subscription_facet_attributes']['virtual_host'].has_key?('name')
+            virtual_host_name = system_details[system['id']]['subscription_facet_attributes']['virtual_host']['name']
+          end
+          if virtual_host_name
+            if not virtualhostregex.match(virtual_host_name)
+              puts "Skipping '#{system['name']}' as the system should be on #{sub['virtual_host']} but it is on #{virtual_host_name}"
               next
             end
           else
@@ -273,7 +293,7 @@ def vdcupdate()
         has_desired_sub = false
         # check the current associated subscription to this system
         if api.has_resource?(:host_subscriptions)
-          req = api.resource(:host_subscriptions).call(:index, {:organization_id => @options[:org], :host_id => system['host_id'], :per_page => 100})
+          req = api.resource(:host_subscriptions).call(:index, {:organization_id => @options[:org], :host_id => system['id'], :per_page => 100})
         else
           req = api.resource(:subscriptions).call(:index, {:organization_id => @options[:org], :system_id => system['id'], :per_page => 100})
         end
@@ -300,7 +320,7 @@ def vdcupdate()
             puts " removing subscription #{sub['cp_id']} from system #{system['id']}"
             if not @options[:noop]
               if api.has_resource?(:host_subscriptions)
-                api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['host_id'], :subscriptions => [{:id => sub['id']}]})
+                api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
               else
                 api.resource(:subscriptions).call(:destroy, {:system_id => system['id'], :id => sub['id']})
               end
@@ -359,7 +379,7 @@ def vdcupdate()
             if not @options[:noop]
               begin
                 if api.has_resource?(:host_subscriptions)
-                  api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['host_id'], :subscriptions => [{:id => subs[desired_sub]['id'], :quantity => desired_quantity}]})
+                  api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => subs[desired_sub]['id'], :quantity => desired_quantity}]})
                 else
                   api.resource(:subscriptions).call(:create, {:system_id => system['id'], :subscriptions => [{:id => desired_sub, :quantity => desired_quantity}]})
                 end
@@ -386,9 +406,9 @@ def vdcupdate()
        puts " auto-attaching subs to system #{system['id']}"
        if not @options[:noop]
          if api.has_resource?(:host_subscriptions)
-           api.resource(:host_subscriptions).call(:auto_attach, {:host_id => system['host_id']})
+           api.resource(:host_subscriptions).call(:auto_attach, {:host_id => system['id']})
          else
-           api.resource(:systems).call(:refresh_subscriptions, {:id => system['id']})
+           api.resource(@host_resource).call(:refresh_subscriptions, {:id => system['id']})
          end
        else
          puts " [noop] auto-attached"
