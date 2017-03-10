@@ -354,7 +354,7 @@ def vdcupdate()
             # if subs[desired_sub] is false, retrieve the current subscription detail
             begin
               # this will retrieve the sub detail only once for each sub
-              subs[desired_sub] ||= api.resource(:subscriptions).call(:show, {:id => desired_sub, :organization_id => @options[:org]})
+              subs[desired_sub] ||= api.resource(:subscriptions).call(:index, {:search => "id=#{desired_sub}", :organization_id => @options[:org]})['results'][0]
             # in case of error adding the subscription, stop the process
             rescue Exception => e
               puts " ERROR: unable to retrieve subscription #{desired_sub}"
