@@ -32,6 +32,7 @@ require 'apipie-bindings'
   :usecache  => false,
   :cachefile => 'katello-attach-subscription.cache',
   :debug     => false,
+  :verbose   => false,
   :search    => nil,
 }
 
@@ -71,13 +72,16 @@ optparse = OptionParser.new do |opts|
   opts.on("-s", "--search=SEARCH", "search for machines matching this string only") do |s|
     @options[:search] = s
   end
-  opts.on("--use-cache", "use cache file") do
+  opts.on("--read-from-cache", "use, if possible, cache file") do
     @options[:usecache] = true
   end
-  opts.on("--cache-file=FILE", "read or write to cache file, based on --use-cache value") do |cf|
+  opts.on("--cache-file=FILE", "read or write to cache file, based on --read-from-cache value") do |cf|
     @options[:cachefile] = cf
   end
-  opts.on("-d", "--debug", "debug the script") do
+  opts.on("-d", "--verbose", "verbose output for the script") do
+    @options[:verbose] = true
+  end
+  opts.on("-d", "--debug", "debug output for the script") do
     @options[:debug] = true
   end
 end
@@ -102,11 +106,115 @@ end
   end
 end
 
+# check functions
+def checksubs()
+  # initialize variables
+  # by default any kind of subscription is fine
+  subfiltertype = nil
+
+  # create api binding
+  api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]})
+
+  # If type is Hypervisor, only NORMAL subscription has to be considered
+  if @yaml[:type] = "Hypervisor"
+    subfiltertype = "NORMAL"
+  end
+
+  # sanity check and fix of yaml file for subscription
+  # going to check if any id in the yaml do not exists, and expand the search keys
+  # sub will keep the originally requested subscriptions, sub_parsed the found one
+  puts "Subscription parsing started. Please be patient."
+  subsyamltotalentry = @yaml[:subs].count
+  @yaml[:subs].each_with_index do |sub, subcurrentcount|
+    puts " Started parsing entry #{subcurrentcount}#{subsyamltotalentry}"
+    if @options[:verbose] or @options[:debug]
+      puts " VERBOSE: started parsing for entry '#{sub["hostname"]}'"
+    end
+    # check only the sub section
+    # if sub is empty, auto-attach
+    if sub.has_key?('sub')
+      # initialize variables
+      sub_parsed = {}
+      desired_sub_hash = sub['sub']
+      # for every product (hash key in yaml) check the desired subs
+      desired_sub_hash.each do |product, desidered_product_sub_array|
+        parsed_product_sub_array = []
+          puts "  Started parsing for product '#{product}'"
+        if @options[:debug]
+          puts "  DEBUG: in the desired_sub_hash, desidered_product_sub_array: #{desidered_product_sub_array}"
+        end
+        desidered_product_sub_array.each do |subscription_item|
+          parsed_subscription = []
+          if @options[:verbose] or @options[:debug]
+            puts "   VERBOSE: parsing subscription '#{subscription_item}'"
+          end
+          page = 0
+          req = nil
+          while (page == 0 or req['results'].length == req['per_page'].to_i)
+            # increase page counter
+            page += 1
+            # get 100 results
+            # filter to be applied: organization, and search options
+            # type (for derived subs) is not indexed, so if a certain type is asked, we need to filter afterwords
+            req = api.resource(:subscriptions).call(:index, {:organization_id => @options[:org], :page => page, :search => subscription_item, :available_for => "host",  :per_page => 100})
+            # concatenate output - all of the results
+            parsed_subscription.concat(req['results'])
+          end
+
+          # if the lookup has given no results at all, no subscriptions has to be added
+          if parsed_subscription.empty? 
+            puts "    Subscription parsing results of search string '#{subscription_item}' is empty, not adding any subscription"
+            if @options[:debug]
+              puts "  DEBUG: retrieved subscription"
+              p req
+            end
+            next
+          end
+          # if empty, so zero results, this will be simply skipped
+          parsed_subscription.each do |subscription|
+            if @options[:debug]
+              puts "   DEBUG: subscription detail for subscription #{subscription['cp_id']}:"
+              p subscription
+            end
+            # if the api are old, subscription_id is set but cp_id is not. Standardizing.
+            if subscription.has_key?('subscription_id') and !(subscription.has_key?('cp_id')) and !(subscription['subscription_id'].is_a?(Integer))
+              subscription['cp_id'] = subscription.delete('subscription_id')
+            end
+            # The type is defined in yaml. Currently handling only the Hypervisor subs, derivated one should be not considered for hypervisors.
+            if subfiltertype and subscription.has_key?('type') and subscription['type'] != subfiltertype
+              if @options[:debug]
+                puts "   Skipping '#{subscription['cp_id']}' as system type '#{subscription['type']}' is different from desired '#{subfiltertype}'"
+              end
+              # if the filter do not match, skip to next subscription
+              next
+            end
+            parsed_product_sub_array.push(subscription['cp_id'])
+          end
+          puts "    Subscription parsing results of search string '#{subscription_item}' is #{parsed_product_sub_array}"
+          # push new subs to array with new key for this product
+          sub_parsed[product] = parsed_product_sub_array  
+          # and copy to the pointer for this product
+          # sub['sub'] are the requested subs
+          # sub['sub_parsed'] are the subs found that has to be associated
+          sub['sub_parsed']=sub_parsed
+        end
+      end
+    end
+  end
+  if @options[:debug]
+    puts " DEBUG: the full yaml subs output after modification"
+    p @yaml[:subs]
+  end
+end
+
+
+
+
 # main function
 def vdcupdate()
   # satellite url has to start with https or PUT will fail with http error
   unless @options[:uri].start_with?('https://')
-    abort " FATAL ERROR: the uri must start with https://"
+    abort "FATAL ERROR: the uri must start with https://"
   end
 
   # create api binding
@@ -132,15 +240,22 @@ def vdcupdate()
   cachefile = @options[:cachefile].to_s + "_org" + @options[:org].to_s
 
   # Fill systems array from API of satellite. Check for cache usage.
-  if @options[:usecache] and File.file?(cachefile)
-    begin
-      cacheyaml = YAML.load_file(cachefile)
-      systems = cacheyaml['systems']
-      system_details = cacheyaml['system_details']
-    rescue Exception
-      abort " FATAL ERROR: Failed to read cache file. re-run without --use-cache."
+  if @options[:usecache]
+    # if the file exists, let's open it
+    if File.file?(cachefile)
+      begin
+        cacheyaml = YAML.load_file(cachefile)
+        systems = cacheyaml['systems']
+        system_details = cacheyaml['system_details']
+      rescue Exception
+        abort "FATAL ERROR: Failed to read cache file. re-run without --read-from-cache."
+      end
+    else
+      puts "FATAL ERROR: --read-from-cache option requested, but the cache file is not currently present."
+      exit 5
     end
   else
+    puts "Starting systems collection from API. Please be patient."
     # no cache wanted or no cache file exists
     # checking all of the systems 100 at the time, from page 0 to latest
     while (page == 0 or req['results'].length == req['per_page'].to_i)
@@ -152,10 +267,13 @@ def vdcupdate()
       # concatenate output - all of the results
       systems.concat(req['results'])
     end
+    puts "Completed systems collection."
   end
 
+  puts "Starting host subscription assignment"
+  systemstotal = systems.count
   # cycle for each system found
-  systems.each do |system|
+  systems.each_with_index do |system, currentcount|
     # initialize variable
     has_desired_sub = nil 
     desired_sub = nil 
@@ -170,23 +288,24 @@ def vdcupdate()
 
     # get detail for each system
     if @options[:debug]
-      puts "DEBUG: detail of the current system to be checked:"
+      puts " DEBUG: detail of the current system to be checked:"
       p system
     end
-    sys = api.resource(@host_resource).call(:show, {:id => system['id'], :fields => 'full'})
     # add to array system the name of the system itself taken from id
-    puts "Current system: #{system['name']} (#{system['id']})"
+    if @options[:verbose] or @options[:debug]
+      puts " VERBOSE: Current system #{currentcount}/#{systemstotal}: #{system['name']} (#{system['id']})"
+    end
 
     # for each item in yaml extract sub
     if @options[:debug]
-      puts "DEBUG: YAML dump"
+      puts " DEBUG: YAML dump with all definitions for the current system"
       p @yaml
     end
     @yaml[:subs].each do |sub|
       # extract the name of the host to be registered
       hostnameregex = Regexp.new(sub['hostname'])
       if @options[:debug]
-        puts "DEBUG: Current host: '#{sub['hostname'].inspect}', looking for pattern '#{hostnameregex.inspect}'"
+        puts "  DEBUG: Current host: '#{sub['hostname'].inspect}', looking for pattern '#{hostnameregex.inspect}'"
       end
 
       # extract the (possible) virtual_host
@@ -204,8 +323,13 @@ def vdcupdate()
         if sub.has_key?('type')
           desired_type = sub['type']
         end
+        # extract current information from the system
+        sys = api.resource(@host_resource).call(:show, {:id => system['id'], :fields => 'full'})
+        # check if the type requested match the host one
         if @default_type and sys['type'] != desired_type
-          puts "Skipping '#{system['name']}' as system type '#{sys['type']}' is different from desired '#{desired_type}'"
+          if @options[:verbose] or @options[:debug]
+            puts "  VERBOSE: Skipping '#{system['name']}' as system type '#{sys['type']}' is different from desired '#{desired_type}'"
+          end
           next
         end
 
@@ -215,7 +339,9 @@ def vdcupdate()
         # fixme: can't find this detail in new API
         if sub.has_key?('registered_by') and sub['registered_by'] and @supports_registered_by
           if sub['registered_by'] != system['registered_by']
-            puts "Skipping '#{system['name']}' as the system registered_by '#{system['registered_by']}' is different from desired '#{sub['registered_by']}'"
+            if @options[:verbose] or @options[:debug]
+              puts "  VERBOSE: Skipping '#{system['name']}' as the system registered_by '#{system['registered_by']}' is different from desired '#{sub['registered_by']}'"
+            end
             next
           end
         end
@@ -232,18 +358,22 @@ def vdcupdate()
           end
           if virtual_host_name
             if not virtualhostregex.match(virtual_host_name)
-              puts "Skipping '#{system['name']}' as the system should be on #{sub['virtual_host']} but it is on #{virtual_host_name}"
+              if @options[:verbose] or @options[:debug]
+                puts "  VERBOSE: Skipping '#{system['name']}' as the system should be on #{sub['virtual_host']} but it is on #{virtual_host_name}"
+              end
               next
             end
           else
-             puts "Skipping '#{system['name']}' as the system should have a virtual host, but it does not."
-             next
+            if @options[:verbose] or @options[:debug]
+              puts "  VERBOSE: Skipping '#{system['name']}' as the system should have a virtual host, but it does not."
+            end
+            next
           end
         end
 
         # set the desidered subscription to be associated
-        if sub.has_key?('sub')
-          desired_sub_hash = sub['sub']
+        if sub.has_key?('sub_parsed')
+          desired_sub_hash = sub['sub_parsed']
         end
         # if "remove_other" has been set, set the flag
         if sub.has_key?('remove_other')
@@ -267,12 +397,17 @@ def vdcupdate()
         end
         # if the system is found, stop cyclyng over yaml, 
         break
+      else
+        if @options[:verbose] or @options[:debug]
+          puts "  VERBOSE: skipping '#{system['name']}' as the system do not match following regexp:"
+          puts "           '#{sub['hostname']}'"
+        end
       end
     end
 
     # check if one or more hosts need a subscription
     if @options[:debug]
-      puts "DEBUG: desired_sub_hash value"
+      puts " DEBUG: desired_sub_hash value"
       p desired_sub_hash
     end
     if desired_sub_hash or not remove_subs.empty?
@@ -282,13 +417,13 @@ def vdcupdate()
       end
 
       if @options[:debug]
-        puts " Checking subscription for #{system['id']}"
+        puts " DEBUG: Checking subscription for #{system['name']} (#{system['id']})"
       end
       has_desired_sub_hash = {}
       # for every product (hash key in yaml) check the desired subs
       desired_sub_hash.each do |product, desidered_product_sub_array|
         if @options[:debug]
-          puts "in the desired_sub_hash #{desidered_product_sub_array}"
+          puts "   DEBUG: in the desired_sub_hash #{desidered_product_sub_array}"
         end
         has_desired_sub = false
         # check the current associated subscription to this system
@@ -306,39 +441,39 @@ def vdcupdate()
             sub['cp_id'] = sub.delete('subscription_id')
           end
           if @options[:debug]
-            puts "DEBUG: subscription detail"
+            puts "  DEBUG: subscription detail"
             p sub
             p desired_sub_hash.flatten(2)
           end
           # check if the found cp_id is in the list of the current product, if it is, our job here is done
           if desidered_product_sub_array.include?(sub['cp_id'])
-            puts " subscription #{sub['cp_id']} for #{product} product is already attached to #{system['id']}"
+            puts "  subscription #{sub['cp_id']} for #{product} product is already attached to #{system['name']}"
             has_desired_sub = true
           # else, if this is not among the desired subscriptions (ALL of them, not only the current product)
           # and remove_other is set, remove this subscription to the system
           elsif sub['cp_id'] != nil and not desired_sub_hash.flatten(2).include?(sub['cp_id']) and (remove_other or remove_subs.include?(sub['cp_id'])) and not (keep_virt_only and sub.has_key?('virt_only') and sub['virt_only']) and not keep_subs.include?(sub['cp_id'])
-            puts " removing subscription #{sub['cp_id']} from system #{system['id']}"
+            puts "  removing subscription #{sub['cp_id']} from system #{system['name']}"
             if not @options[:noop]
               if api.has_resource?(:host_subscriptions)
                 api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
               else
                 api.resource(:subscriptions).call(:destroy, {:system_id => system['id'], :id => sub['id']})
               end
-              puts " removed"
+              puts "  removed"
             else
-              puts " [noop] removed"
+              puts "  [noop] removed"
             end
           end
         end
         # if all of the subscriptions marked for this product is missing, mark it to be added
         if not desidered_product_sub_array.empty? and not has_desired_sub
-          puts "Subscription for product " + product.to_s + " currently missing. Set for the attach."
+          puts "  Subscription on host #{system['name']} for product " + product.to_s + " currently missing. Set for the attach."
           has_desired_sub_hash[product] = desidered_product_sub_array
         end
       end
  
       if @options[:debug]
-        puts "DEBUG: has_desired_sub_hash: #{has_desired_sub_hash}"
+        puts "  DEBUG: has_desired_sub_hash: #{has_desired_sub_hash}"
       end
 
       # if the system do not has proper subscritions, attach it
@@ -348,7 +483,7 @@ def vdcupdate()
           # cycle for each subscription
           desired_subs_hash.each do |desired_sub|
             if @options[:debug]
-              puts "DEBUG: current subscription to be checked"
+              puts "  DEBUG: current subscription to be checked"
               p desired_sub
             end
             # if subs[desired_sub] is false, retrieve the current subscription detail
@@ -357,7 +492,7 @@ def vdcupdate()
               subs[desired_sub] ||= api.resource(:subscriptions).call(:index, {:search => "id=#{desired_sub}", :organization_id => @options[:org]})['results'][0]
             # in case of error adding the subscription, stop the process
             rescue Exception => e
-              puts " ERROR: unable to retrieve subscription #{desired_sub}"
+              puts "  ERROR: unable to retrieve subscription #{desired_sub}"
               puts e.message
               puts e.backtrace.inspect
               exit 1
@@ -366,11 +501,11 @@ def vdcupdate()
             desired_quantity = 1
             # if there are not enough available subscriptions check the next available
             if desired_quantity > subs[desired_sub]['available'].to_i and subs[desired_sub]['quantity'].to_i != -1
-              puts " cannot add subscription #{desired_sub} (id: #{subs[desired_sub]['id']}): only #{subs[desired_sub]['available']} available, but #{desired_quantity} requested"
+              puts "   Cannot add subscription #{desired_sub} (id: #{subs[desired_sub]['id']}): only #{subs[desired_sub]['available']} available, but #{desired_quantity} requested"
               next
             end
             # if requirements are met, add the subscription
-            puts " adding #{desired_sub} for #{product} (id: #{subs[desired_sub]['id']})"
+            puts "   adding #{desired_sub} for #{product} (id: #{subs[desired_sub]['id']})"
   
             # fix the number of the available and consumed subscription because this will be retrieved only once
             subs[desired_sub]['available'] -= desired_quantity
@@ -383,18 +518,18 @@ def vdcupdate()
                 else
                   api.resource(:subscriptions).call(:create, {:system_id => system['id'], :subscriptions => [{:id => desired_sub, :quantity => desired_quantity}]})
                 end
-                puts " added #{desired_sub} for #{product} in system #{system['id']}"
+                puts "    Added #{desired_sub} for #{product} in system #{system['id']}"
                 # stop cycling over the subscription available since the first available has been added
                 break
               # in case of error adding the subscription, stop the process
               rescue Exception => e
-                puts " ERROR: unable to attach subscription"
+                puts "  ERROR: unable to attach subscription"
                 puts e.message
                 puts e.backtrace.inspect
                 exit 1
               end
             else
-              puts " [noop] added #{desired_sub} for #{product} in system #{system['id']}"
+              puts "    [noop] Added #{desired_sub} for #{product} in system #{system['id']}"
               break
             end
           end
@@ -403,7 +538,7 @@ def vdcupdate()
     end
 
     if auto_attach
-       puts " auto-attaching subs to system #{system['id']}"
+       puts "  auto-attaching subs to system #{system['id']}"
        if not @options[:noop]
          if api.has_resource?(:host_subscriptions)
            api.resource(:host_subscriptions).call(:auto_attach, {:host_id => system['id']})
@@ -411,15 +546,17 @@ def vdcupdate()
            api.resource(@host_resource).call(:refresh_subscriptions, {:id => system['id']})
          end
        else
-         puts " [noop] auto-attached"
+         puts "  [noop] auto-attached"
        end
     end
   end
 
   if not @options[:usecache]
     # always write the cache file at the end, to be used in the future
+    puts "Writing YAML file into cache file #{cachefile}"
     File.open(cachefile, 'w') {|f| f.write(YAML.dump({'systems' => systems, 'system_details' => system_details})) }
   end
 end
 
+checksubs
 vdcupdate
