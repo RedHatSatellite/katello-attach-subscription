@@ -12,6 +12,7 @@
       rhel:
         - 4543828edcf35158c30abc3554c1e36a
         - 5543828edcf35158c30abc3554c1e36b
+        - "Red Hat Enterprise Linux Server, Standard (* sockets) (Unlimited guests)"
       jboss:
         - 6543828edcf35158c30abc3554c1e36c
         - 7543828edcf35158c30abc3554c1e36d

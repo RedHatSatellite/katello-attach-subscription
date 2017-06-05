@@ -78,7 +78,7 @@ optparse = OptionParser.new do |opts|
   opts.on("--cache-file=FILE", "read or write to cache file, based on --read-from-cache value") do |cf|
     @options[:cachefile] = cf
   end
-  opts.on("-d", "--verbose", "verbose output for the script") do
+  opts.on("-v", "--verbose", "verbose output for the script") do
     @options[:verbose] = true
   end
   opts.on("-d", "--debug", "debug output for the script") do

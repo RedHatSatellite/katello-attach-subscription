@@ -29,8 +29,9 @@ When run, `katello-attach-subscription` will execute the following steps:
 * `-n`, `--noop` do not actually execute anything
 * `-H`, `--used-hypervisors-only` only search for hypervisors that are in use
 * `-s`, `--search=SEARCH` only search for hypervisors that are in use
-* `--use-cache` read systems from the cache
+* `--read-from-cache` read systems from the cache
 * `--cache-file=FILE` set the cache file for reading and writing
+* `-v`, `--verbose` show verbose code during execution
 * `-d`, `--debug` show debug code during execution
 
 ## Configuration
