@@ -82,6 +82,7 @@ optparse = OptionParser.new do |opts|
     @options[:verbose] = true
   end
   opts.on("-d", "--debug", "debug output for the script") do
+    @options[:verbose] = true
     @options[:debug] = true
   end
 end
@@ -115,21 +116,25 @@ def checksubs()
   # create api binding
   api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]})
 
-  # If type is Hypervisor, only NORMAL subscription has to be considered
-  if @yaml[:type] = "Hypervisor"
-    subfiltertype = "NORMAL"
-  end
-
   # sanity check and fix of yaml file for subscription
   # going to check if any id in the yaml do not exists, and expand the search keys
   # sub will keep the originally requested subscriptions, sub_parsed the found one
   puts "Subscription parsing started. Please be patient."
   subsyamltotalentry = @yaml[:subs].count
   @yaml[:subs].each_with_index do |sub, subcurrentcount|
-    puts " Started parsing entry #{subcurrentcount}#{subsyamltotalentry}"
-    if @options[:verbose] or @options[:debug]
+    puts " Started parsing entry #{subcurrentcount}/#{subsyamltotalentry}"
+    if @options[:verbose]
       puts " VERBOSE: started parsing for entry '#{sub["hostname"]}'"
     end
+
+    # If type is Hypervisor, only NORMAL subscription has to be considered
+    if sub["type"] = "Hypervisor"
+      subfiltertype = "NORMAL"
+      if @options[:verbose]
+        puts " VERBOSE: subs look for host type '#{sub["type"]}', looking for '#{subfiltertype}' subscriptions"
+      end
+    end
+
     # check only the sub section
     # if sub is empty, auto-attach
     if sub.has_key?('sub')
@@ -145,7 +150,7 @@ def checksubs()
         end
         desidered_product_sub_array.each do |subscription_item|
           parsed_subscription = []
-          if @options[:verbose] or @options[:debug]
+          if @options[:verbose]
             puts "   VERBOSE: parsing subscription '#{subscription_item}'"
           end
           page = 0
@@ -292,7 +297,7 @@ def vdcupdate()
       p system
     end
     # add to array system the name of the system itself taken from id
-    if @options[:verbose] or @options[:debug]
+    if @options[:verbose]
       puts " VERBOSE: Current system #{currentcount}/#{systemstotal}: #{system['name']} (#{system['id']})"
     end
 
@@ -327,7 +332,7 @@ def vdcupdate()
         sys = api.resource(@host_resource).call(:show, {:id => system['id'], :fields => 'full'})
         # check if the type requested match the host one
         if @default_type and sys['type'] != desired_type
-          if @options[:verbose] or @options[:debug]
+          if @options[:verbose]
             puts "  VERBOSE: Skipping '#{system['name']}' as system type '#{sys['type']}' is different from desired '#{desired_type}'"
           end
           next
@@ -339,7 +344,7 @@ def vdcupdate()
         # fixme: can't find this detail in new API
         if sub.has_key?('registered_by') and sub['registered_by'] and @supports_registered_by
           if sub['registered_by'] != system['registered_by']
-            if @options[:verbose] or @options[:debug]
+            if @options[:verbose]
               puts "  VERBOSE: Skipping '#{system['name']}' as the system registered_by '#{system['registered_by']}' is different from desired '#{sub['registered_by']}'"
             end
             next
@@ -358,13 +363,13 @@ def vdcupdate()
           end
           if virtual_host_name
             if not virtualhostregex.match(virtual_host_name)
-              if @options[:verbose] or @options[:debug]
+              if @options[:verbose]
                 puts "  VERBOSE: Skipping '#{system['name']}' as the system should be on #{sub['virtual_host']} but it is on #{virtual_host_name}"
               end
               next
             end
           else
-            if @options[:verbose] or @options[:debug]
+            if @options[:verbose]
               puts "  VERBOSE: Skipping '#{system['name']}' as the system should have a virtual host, but it does not."
             end
             next
@@ -398,7 +403,7 @@ def vdcupdate()
         # if the system is found, stop cyclyng over yaml, 
         break
       else
-        if @options[:verbose] or @options[:debug]
+        if @options[:verbose]
           puts "  VERBOSE: skipping '#{system['name']}' as the system do not match following regexp:"
           puts "           '#{sub['hostname']}'"
         end
