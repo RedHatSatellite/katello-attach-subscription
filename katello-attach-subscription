@@ -34,6 +34,7 @@ require 'apipie-bindings'
   :debug     => false,
   :verbose   => false,
   :search    => nil,
+  :verify_ssl  => true,
 }
 
 @options = {
@@ -84,6 +85,9 @@ optparse = OptionParser.new do |opts|
   opts.on("-d", "--debug", "debug output for the script") do
     @options[:verbose] = true
     @options[:debug] = true
+  end
+  opts.on("--no-verify-ssl", "don't verify SSL certs") do
+    @options[:verify_ssl] = false
   end
 end
 optparse.parse!
@@ -223,7 +227,7 @@ def vdcupdate()
   end
 
   # create api binding
-  api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]})
+  api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]}, {:verify_ssl => @options[:verify_ssl]})
 
   req = api.resource(:home).call(:status)
   if Gem::Version.new(req['version']) >= Gem::Version.new('1.11')
