@@ -22,18 +22,28 @@ require 'optparse'
 require 'yaml'
 require 'apipie-bindings'
 
+# force the output to be sent to stdout in a sync way
+$stdout.sync = true
+
 @defaults = {
-  :noop      => false,
-  :uri       => 'https://localhost/',
-  :timeout   => 300,
-  :user      => 'admin',
-  :pass      => 'changeme',
-  :org       => 1,
-  :usecache  => false,
-  :cachefile => 'katello-attach-subscription.cache',
-  :debug     => false,
-  :search    => nil,
-  :verify_ssl  => true,
+  :noop             => false,
+  :uri              => 'https://localhost/',
+  :timeout          => 300,
+  :user             => 'admin',
+  :pass             => 'changeme',
+  :org              => 1,
+  :usecache         => false,
+  :cachefile        => 'katello-attach-subscription.cache',
+  :virtwho          => false,
+  :virtwhocachefile => 'virt-who.cache',
+  :emptyvisor       => false,
+  :debug            => false,
+  :verbose          => false,
+  :search           => nil,
+  :usedhypervsior   => false,
+  :ratio            => false,
+  :ratiofile        => 'cluster-state.csv',
+  :ratiovalue       => 5
 }
 
 @options = {
@@ -66,23 +76,49 @@ optparse = OptionParser.new do |opts|
   opts.on("-n", "--noop", "do not actually execute anything") do
     @options[:noop] = true
   end
+
+  # this search options doesn't work with satellite >= 6.2, if option is enabled and Satellite version is wrong, the code exit with error
   opts.on("-H", "--used-hypervisors-only", "only search for hypervisors that are in use") do
     @options[:search] = 'virtual_guests:*'
+    @options[:usedhypervsior] = true
   end
+
   opts.on("-s", "--search=SEARCH", "search for machines matching this string only") do |s|
     @options[:search] = s
   end
-  opts.on("--use-cache", "use cache file") do
+  opts.on("--read-from-cache", "use, if possible, cache file") do
     @options[:usecache] = true
   end
-  opts.on("--cache-file=FILE", "read or write to cache file, based on --use-cache value") do |cf|
+  opts.on("--cache-file=FILE", "read or write to cache file, based on --read-from-cache value") do |cf|
     @options[:cachefile] = cf
   end
-  opts.on("-d", "--debug", "debug the script") do
-    @options[:debug] = true
+  opts.on("--virt-who", "use the command virt-who --print to retrieve the cpu.cpu_socket(s)'s data of the hypervisors. Not working with virt-who version lower then 0.16") do
+    @options[:virtwho] = true
   end
-  opts.on("--no-verify-ssl", "don't verify SSL certs") do
-    @options[:verify_ssl] = false
+  opts.on("--virt-who-file=FILE", "read or write to virt-who cache file, based on --read-from-cache value and --virt-who. Not working with virt-who version lower then 0.16") do |vwf|
+    @options[:virtwhocachefile] = vwf
+  end
+  opts.on("--empty-visor", "remove all the empty hypervisor from Satellite before apply the subscription process. Not compatible with --check-density option.") do
+    @options[:emptyvisor] = true
+  end
+
+  opts.on("--check-density", "check if all hosts in a cluster has an average number of guests >= 5 for assigning VDC Subscription. Not compatible with --empty-visor option.") do
+    @options[:density] = true
+  end
+
+  opts.on("--check-density-value=VALUE", "check if all hosts in a cluster has an average number of guests >= VALUE for assigning VDC Subscription") do |val|
+    @options[:densityvalue] = val
+  end
+
+  opts.on("--check-density-file=FILE", "write report of cluster state to custom file") do |crf|
+    @options[:densityfile] = crf
+  end
+  opts.on("-v", "--verbose", "verbose output for the script") do
+    @options[:verbose] = true
+  end
+  opts.on("-d", "--debug", "debug output for the script") do
+    @options[:verbose] = true
+    @options[:debug] = true
   end
 end
 optparse.parse!
@@ -99,6 +135,39 @@ if @yaml.has_key?(:settings) and @yaml[:settings].is_a?(Hash)
   end
 end
 
+
+# check if incompatible options are present
+if @options[:emptyvisor] and @options[:density]
+  puts "FATAL ERROR: Script can't run with --empty-visor and --check-density options enabled. Choose only one."
+  exit 5
+end
+
+# check if -H options is enabled, if true, check the version of Gem as Satellite >= 6.2 doesn't support 
+if @options[:usedhypervsior]
+  api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]})
+  req = api.resource(:home).call(:status)
+  if Gem::Version.new(req['version']) >= Gem::Version.new('1.11')
+    puts "FATAL ERROR: -H --used-hypervisors-only options aren't supported for Satellite >= 6.2"
+    exit 5
+  end
+end
+
+# if the script run with virt-who option enabled it's required json to read the json output data of virt-who --print
+if @options[:virtwho]
+  if @options[:debug]
+    puts " DEBUG: use of virt-who enabled, json module added"
+  end
+  require 'json'
+end
+
+# if the script run with check density option enabled it's required CSV to write the state of the cluster
+if @options[:density]
+  if @options[:debug]
+    puts " DEBUG: check cluster density option enabled, csv module added"
+  end
+  require 'csv'
+end
+
 # missing configuration parameters from file or command line are taken from the default one
 @defaults.each do |key,val|
   if not @options.has_key?(key)
@@ -106,17 +175,729 @@ end
   end
 end
 
+@virtwho_data = false
+@parsed_hypervisors_array = []
+@full_cluster  = []
+@empty_cluster = []
+@clustered_hypervisor_list = []
+
+# check functions
+def checksubs()
+  # initialize variables
+  # by default any kind of subscription is fine
+  subfiltertype = nil
+  cachefile = @options[:cachefile].to_s + "_org" + @options[:org].to_s
+  cachepresent = false
+  if @options[:usecache]
+    # if the file exists, let's open it
+    if File.file?(cachefile)
+      begin
+        cacheyaml = YAML.load_file(cachefile)
+        if @yaml.has_key?(:subs) and @yaml[:subs].is_a?(Hash) and @yaml[:subs].count > 0
+          @yaml[:subs] = cacheyaml['subs']
+          puts "Reading subscription from cache"
+          cachepresent = true
+        else
+          puts "Empty subscription cache, continuing"
+        end
+      rescue Exception
+        abort "FATAL ERROR: Failed to read cache file for subscriptions. re-run without --read-from-cache."
+      end
+    else
+      puts "FATAL ERROR: --read-from-cache option requested, but the cache file is not currently present."
+      exit 5
+    end
+  end
+
+  # create api binding
+  api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]})
+
+  # sanity check and fix of yaml file for subscription
+  # going to check if any id in the yaml do not exists, and expand the search keys
+  # sub will keep the originally requested subscriptions, sub_parsed the found one
+  if not cachepresent
+    puts "Subscription parsing started. Please be patient."
+    subsyamltotalentry = @yaml[:subs].count
+
+    @yaml[:subs].each_with_index do |sub, subcurrentcount|
+      puts " Started parsing entry #{subcurrentcount+1}/#{subsyamltotalentry}"
+      # check if the hash contains data. If not, skip it.
+      if not sub.is_a?(Hash)
+        puts "  YAML entry without valid data, like empty entry. No further actions on this entry."
+        next
+      end
+
+      # starting the process
+      if @options[:verbose]
+        puts " VERBOSE: started parsing for entry '#{sub["hostname"]}'"
+      end
+
+      # If type is Hypervisor, only NORMAL subscription has to be considered
+      if sub["type"] == "Hypervisor"
+        subfiltertype = "NORMAL"
+        if @options[:verbose]
+          puts " VERBOSE: subs look for host type '#{sub["type"]}', looking for '#{subfiltertype}' subscriptions"
+        end
+      end
+
+      # check only the sub section
+      # if sub is empty, auto-attach
+      if sub.has_key?('sub')
+        # initialize variables
+        sub_parsed = {}
+        desired_sub_hash = sub['sub']
+        if not desired_sub_hash.is_a?(Hash)
+          puts "  YAML entry without valid data, like empty subscription. As no valid subscriptions are listed, that will be deleted on the given hosts."
+          next
+        end
+        # for every product (hash key in yaml) check the desired subs
+        desired_sub_hash.each do |product, desidered_product_sub_array|
+          parsed_product_sub_array = []
+            puts "  Started parsing for product '#{product}'"
+          if @options[:debug]
+            puts "  DEBUG: in the desired_sub_hash, desidered_product_sub_array: #{desidered_product_sub_array}"
+          end
+          desidered_product_sub_array.each do |subscription_item|
+            parsed_subscription = []
+            if @options[:verbose]
+              puts "   VERBOSE: parsing subscription '#{subscription_item}'"
+            end
+            page = 0
+            req = nil
+            while (page == 0 or req['results'].length == req['per_page'].to_i)
+              # increase page counter
+              page += 1
+              # get 100 results
+              # filter to be applied: organization, and search options
+              # type (for derived subs) is not indexed, so if a certain type is asked, we need to filter afterwords
+              req = api.resource(:subscriptions).call(:index, {:organization_id => @options[:org], :page => page, :search => subscription_item, :available_for => "host",  :per_page => 100})
+              # concatenate output - all of the results
+              parsed_subscription.concat(req['results'])
+            end
+
+            # if the lookup has given no results at all, no subscriptions has to be added
+            if parsed_subscription.empty?
+              puts "    Subscription parsing results of search string '#{subscription_item}' is empty, not adding any subscription"
+              if @options[:debug]
+                puts "  DEBUG: retrieved subscription"
+                p req
+              end
+              next
+            end
+            # if empty, so zero results, this will be simply skipped
+            parsed_subscription.each do |subscription|
+              if @options[:debug]
+                puts "   DEBUG: subscription detail for subscription #{subscription['cp_id']}:"
+                p subscription
+              end
+              # if the api are old, subscription_id is set but cp_id is not. Standardizing.
+              if subscription.has_key?('subscription_id') and !(subscription.has_key?('cp_id')) and !(subscription['subscription_id'].is_a?(Integer))
+                subscription['cp_id'] = subscription.delete('subscription_id')
+              end
+              # The type is defined in yaml. Currently handling only the Hypervisor subs, derivated one should be not considered for hypervisors.
+              if subfiltertype and subscription.has_key?('type') and subscription['type'] != subfiltertype
+                if @options[:debug]
+                  puts "   Skipping '#{subscription['cp_id']}' as system type '#{subscription['type']}' is different from desired '#{subfiltertype}'"
+                end
+                # if the filter do not match, skip to next subscription
+                next
+              end
+              parsed_product_sub_array.push(subscription['cp_id'])
+            end
+            puts "    Subscription parsing results of search string '#{subscription_item}' is #{parsed_product_sub_array}"
+            # push new subs to array with new key for this product
+            sub_parsed[product] = parsed_product_sub_array
+            # and copy to the pointer for this product
+            # sub['sub'] are the requested subs
+            # sub['sub_parsed'] are the subs found that has to be associated
+            sub['sub_parsed']=sub_parsed
+          end
+        end
+      end
+    end
+    if @options[:debug]
+      puts " DEBUG: the full yaml subs output after modification"
+      p @yaml[:subs]
+    end
+  end
+
+  # if virt-who option is enabled we are going to execute the command virt-who --print to retrieve
+  # hypervisors data and so their number of socket
+  json_hash = {}
+  run_virtwho_print = false
+
+  if @options[:debug]
+    puts "DEBUG: virt-who enabled: #{@options[:virtwho]}"
+  end
+
+  if @options[:virtwho]
+    if @options[:debug]
+      puts "  DEBUG: Checking if virt-who is installed"
+    end
+    # virt-who cachefile contain the cached data of the json with the hypervisor data
+    # the desired pattern for the name of this cache file is virt-who-{ date in yyyymm }.cache_org{ organization id }
+    virtwho_cachefile = @options[:virtwhocachefile].to_s + "_org" + @options[:org].to_s
+    # firts of all, we have to check if the machine has virt-who installed
+    virtwho_location = `which virt-who`
+
+    virtwho_location = virtwho_location.chop!
+    # if which command exit and exit with code 0 then virt-who is installed in virtwho_location
+    if $?.exited? and $?.exitstatus.to_i == 0
+      if @options[:debug]
+        puts "  DEBUG: virt-who installed in #{virtwho_location}"
+      end
+      # now we have to check the version of virt-who launching
+      # dummy versions as virt-who --version is available only from newer versions
+      virtwho_version_number = 0.16
+      # if virt-who it's of the correct version set true the run_virtwho_print flag
+      if virtwho_version_number >= 0.16
+        run_virtwho_print = true
+        # if @options[:usecache] is enabled, before launch virt-who --print we try to read the cache file
+        if @options[:usecache]
+          run_virtwho_print = false
+          # if the virt-who cache file exists, let's open it
+          if File.file?(virtwho_cachefile)
+            begin
+              # first, we read the raw data from the file and put them into raw_json
+              raw_json = File.read(virtwho_cachefile)
+              # then we parse the JSON data to a ruby hash map called json_hash
+              json_hash = JSON.parse(raw_json)
+            rescue Exception
+              abort "FATAL ERROR: Failed to read virt-who cache file for Hypervisors data. Re-run without --read-from-cache."
+            end
+          else
+            puts "FATAL ERROR: --read-from-cache and --virt-who option requested, but the cache file is not currently present."
+            exit 5
+          end
+
+          if @options[:debug]
+            puts "DEBUG: raw virt-who.cache parsed data"
+            p json_hash
+          end
+          # if json_hash is not an hash or the hashmap hasn't any key named hypervisors or has 0 entry in the hashmap then run the virt-who --print
+          if json_hash.is_a?(Hash) and json_hash.has_key?("hypervisors") and json_hash["hypervisors"].count > 0
+            # check the sanity and if every hypervisor have the data we need
+            puts "Starting virt-who cache file parsing. Please be patient."
+            @parsed_hypervisors_array = []
+            json_hash["hypervisors"].each do |json_hypervisor|
+              if @options[:debug]
+                puts " DEBUG: Current Hypervisor fetched data:"
+                p json_hypervisor
+              end
+              # if an entry has valid data push to parsed hypervisor array
+              # check if hypervisor has key facts that contain a valid positive integer value relative the number of socket(s)
+              if json_hypervisor.is_a?(Hash) and json_hypervisor.has_key?("facts") and json_hypervisor["facts"].is_a?(Hash) and ((json_hypervisor["facts"].has_key?("cpu.cpu_socket(s)") and json_hypervisor["facts"]["cpu.cpu_socket(s)"].to_i > 0) or (json_hypervisor["facts"].has_key?("hypervisor.cluster") and json_hypervisor["facts"]["hypervisor.cluster"]))
+                @parsed_hypervisors_array.push(json_hypervisor)
+              else
+                if @options[:debug]
+                  puts "   DEBUG: Skipping Hypervisor from cache #{json_hypervisor["name"]} because data is not valid"
+                end
+              end
+            end
+              # if parsed_hypervisors_array isn't empty then virt-who --print should not run
+              if not @parsed_hypervisors_array.empty?
+                run_virtwho_print = false
+              else
+                # if parsed_hypervisors_array is empty then try to run virt-who --print to retrieve data
+                puts " Hypervisor parsing results from cache is empty, 'virt-who --print' will run to retrieve data"
+                run_virtwho_print = true
+              end
+          else
+            puts "Invalid or empty JSON of virt-who cache file, 'virt-who --print' will run to retrieve data"
+            run_virtwho_print = true
+          end
+        end
+
+      else
+        puts "FATAL ERROR: --virt-who option requested, but virt-who version is lower then 0.16. re run without --virt-who or update it."
+        exit 5
+      end
+    else
+      puts "FATAL ERROR: --virt-who option requested, but virt-who is not installed. re run without --virt-who or install it."
+      exit 5
+    end
+
+    # if run_virtwho_print is true then run virt-who --print
+    if run_virtwho_print
+      virtwho_data = true
+      puts "Running the command 'virt-who --print' to retrieve Hypervisors data. Please be patient."
+
+      # Decomment for using upstream version of virt-who. Place the script in the same path of virt-who script
+      # This is needed for retrieving cluster data if installed version of virt-who is not in pair with github one
+      # virtwho_location = './virt-who'
+
+      # run virt-who --print and send debug output to /dev/null as it's not useful for the script
+      virtwho_print_output = `#{virtwho_location} -p 2>> /dev/null`
+      # if extited correctly start to parse the output
+      if $?.exited? and $?.exitstatus == 0
+        virtwho_print_output = virtwho_print_output.chop!
+        if @options[:debug]
+          puts "  DEBUG: virt-who --print output: "
+          p virtwho_print_output
+        end
+        puts "Command 'virt-who --print' command run successfully. Starting to parse Hypervisors data. Please be patient."
+        # start parsing virt-who --print output
+        json_hash = JSON.parse(virtwho_print_output)
+        # if data is parsed correctly and contain hypervisors data start sanity check
+        if json_hash.is_a?(Hash) and json_hash.has_key?("hypervisors") and json_hash["hypervisors"].count > 0
+          @parsed_hypervisors_array = []
+          json_hash["hypervisors"].each do |json_hypervisor|
+            if @options[:debug]
+              puts " DEBUG: Current Hypervisor fetched data:"
+              p json_hypervisor
+            end
+            # if an entry has valid data push to parsed hypervisor array
+            # check if hypervisor has key facts that contain a valid positive integer value relative the number of socket(s) or has cluster key
+            if json_hypervisor.is_a?(Hash) and json_hypervisor.has_key?("facts") and json_hypervisor["facts"].is_a?(Hash) and ((json_hypervisor["facts"].has_key?("cpu.cpu_socket(s)") and json_hypervisor["facts"]["cpu.cpu_socket(s)"].to_i > 0) or (json_hypervisor["facts"].has_key?("hypervisor.cluster") and json_hypervisor["facts"]["hypervisor.cluster"]))
+              # add Hypervisor to array as it has valid data for rescue
+              @parsed_hypervisors_array.push(json_hypervisor)
+            else
+              if @options[:verbose]
+                puts "  VERBOSE: Skipping Hypervisor #{json_hypervisor["name"]} because data is not valid"
+              end
+              next
+            end
+          end
+          # if parsed_hypervisors_array isn't empty, set virtwho_data to true so this data can use for rescue socket or cluster data in case satellite API fails to retrieve facts from Satellite
+          if not @parsed_hypervisors_array.empty?
+            @virtwho_data = true
+          else
+            # if parsed hypervisor is empty then no data would be used to recover satellite facts fails
+            puts " Hypervisor parsing results from 'virt-who --print' is empty, no data from virt-who would be used."
+            @virtwho_data = false
+          end
+        else
+          puts "Invalid or empty JSON parsed from virt-who. virt-who data would be ignored."
+          @virtwho_data = false
+        end
+      else
+        puts "FATAL ERROR: something went wrong while running virt-who --print command. Possible fix it's to avoid running virt-who as service"
+        exit 5
+      end
+    end
+
+    if @options[:debug]
+      puts " DEBUG: the full hypervisor data from JSON output after using virt-who option is:"
+      p @parsed_hypervisors_array
+    end
+
+    if not @options[:usecache]
+      # always write the cache file at the end, to be used in the future
+      puts "Writing JSON file into cache file #{virtwho_cachefile}"
+      full_hypervisors_hash = {}
+      full_hypervisors_hash["hypervisors"]=@parsed_hypervisors_array
+      json_cache_file = File.open(virtwho_cachefile,"w") do |f|
+        f.write(JSON.pretty_generate(full_hypervisors_hash))
+      end
+    end
+  end
+
+  # starting retrieve hypervisor data from Satellite API
+  # searching booth for empty-visor and cluster density options
+  hypervisors_collection = []
+  if @options[:emptyvisor] or @options[:density]
+    puts "Starting retrieving hypervisor data. Please be patient."
+    hypervisor_req = {}
+    hypervisors_list = []
+    page = 0
+    while (page == 0 or hypervisor_req['results'].length == hypervisor_req['per_page'].to_i)
+      # increase page counter
+      page += 1
+      if @options[:verbose]
+        puts "  VERBOSE: Collecting data of page number #{page}"
+      end
+      # filter to be applied: organization and search options: hypervisor = true
+      hypervisor_req = api.resource(:hosts).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100, :search => "hypervisor=true" })
+      if @options[:debug]
+        puts "    DEBUG: Completed data retrieving of page #{page}"
+      end
+      # concatenate output - all of the results
+      hypervisors_list.concat(hypervisor_req['results'])
+    end
+    if @options[:verbose]
+      puts "  VERBOSE: Start retrieving full data for every hypervisors."
+    end
+    # loop all retrieved hypervisor
+    hypervisors_list.each_with_index do |system, currentcount|
+      if @options[:verbose]
+        puts "    VERBOSE: Current founded hypervisor #{currentcount+1}/#{hypervisors_list.count}: #{system['name']} (#{system['id']})"
+      end
+      # retrieve full data for every hypervisor found
+      begin
+        sys = api.resource(:hosts).call(:show, {:id => system['id'], :fields => 'full'})
+        hypervisors_collection.push(sys)
+      rescue RestClient::NotFound
+        STDERR.puts "   ERROR: Hypervisor '#{system['name']}' not found. Skipping."
+        next
+      rescue Exception => e
+        puts "   ERROR: Unknow Error -- Unable to retrieve details for hypervisor #{system['id']} #{system['name']}"
+        puts e.message
+        puts e.backtrace.inspect
+        puts e.response
+        exit 1
+      end
+    end
+    puts "Collecting hypervisor data completed successfully"
+  end
+
+  # start checking 'density' of cluster
+  if @options[:density]
+    puts "Starting checking cluster density"
+    if @options[:debug]
+      if @options[:virtwho]
+        puts "  DEBUG: use of virt-who enabled, if Satellite fails use its data"
+      end
+    end
+    # sanity check, if hypervisor::cluster is not found in facts dictionary add it by searching in virt-who data
+    # hypervisor::cluster guessed as possible name as cpu.cpu_socket(s) from virt-who is encoded cpu::cpu_socket(s) in Satellite Facts API
+    if @options[:verbose]
+      puts "  VERBOSE: Start sanity check of hypervisors data"
+    end
+
+    # initialize cluster hash dictionary for storing all cluster density data
+    cluster_hash = {}
+    # loop all the hypervisor founded in API call
+    hypervisors_collection.each_with_index do |system, currentcount|
+      if @options[:verbose]
+        puts "    VERBOSE: Checking cluster of #{system['name']} #{currentcount+1}/#{hypervisors_collection.count}"
+      end
+      hypercluster = {}
+      hypercluster = system
+      # if field hypervisor::cluster is present and  setted skip recovery phase
+      if system.has_key?('facts') and system['facts'].is_a?(Hash) and system['facts'].has_key?('hypervisor::cluster') and system['facts']['hypervisor::cluster']
+        if @options[:debug]
+          puts "      DEBUG: Hypervisor cluster of #{system['name']} is #{system['facts']['hypervisor::cluster']}"
+        end
+        # save in the hypervisor data with cluster saved
+        @clustered_hypervisor_list.push(hypercluster)
+        next
+      else
+        # if there is a problem with current hypervisor's cluster of satellite try to retrieve it from virt-who data, if present
+        if @options[:virtwho]
+          if @options[:verbose]
+            puts "      VERBOSE: No cluster data found. Start rescue cluster data from virt-who data"
+          end
+          # if virt-who data are present check
+          if @virtwho_data
+            cluster_found = false
+            # loop all the hypervisor founded in virt-who --print phase searching the same hosts
+            @parsed_hypervisors_array.each_with_index do |rescue_hypervisor, rescue_count|
+              # genereting %hostname% regexp as virt-who --print command doesn't return virt-who-name-org_number like API, only name
+              hypervisor_name_regexp = Regexp.new(rescue_hypervisor['uuid'])
+              if rescue_hypervisor.has_key?('name')
+                hypervisor_name_regexp = Regexp.new(rescue_hypervisor['name'])
+              end
+              # if match, we found the right hypervisor
+              if hypervisor_name_regexp.match(system['name'])
+                cluster_found = true
+                if @options[:verbose]
+                  puts "        VERBOSE: Cluster data found"
+                end
+                cluster_name = ""
+                # recover cluster name from virt-who facts hypervisor.cluster
+                if rescue_hypervisor['facts'].has_key?('hypervisor.cluster')
+                  cluster_name = rescue_hypervisor['facts']['hypervisor.cluster']
+                else
+                  # if it's not present mark none
+                  cluster_name = 'none'
+                end
+                # hypercluster is the API data of hypervisor with added the facts about Cluster name
+                hypercluster.merge!({"facts"=>{'hypervisor::cluster'=>cluster_name}})
+                # add to clustered_hypervisor_list array
+                @clustered_hypervisor_list.push(hypercluster)
+                if @options[:debug]
+                  puts "        DEBUG: recovered cluster is #{rescue_hypervisor['facts']['hypervisor.cluster']}"
+                end
+                break
+              else
+                # rescue hypervisor isn't the same of the current Satellite hypervisor skip.
+                # output commented as the script would execute too many junk print
+                # if @options[:debug]
+                #   puts "          DEBUG: Skipping hypervisor #{rescue_hypervisor['uuid']} as different from #{system['name']}"
+                # end
+                next
+              end
+            end
+            # if no rescue hypervisors are found in virt-who data mark hypercluster cluster as 'nil'
+            if not cluster_found
+              if @options[:verbose]
+                puts "        VERBOSE: No cluster data found in virt-who for #{system['name']}. Marking with 'none' as default"
+              end
+              cluster_name = 'nil'
+              hypercluster.merge!({"facts"=>{'hypervisor::cluster'=>cluster_name}})
+              @clustered_hypervisor_list.push(hypercluster)
+            end
+          else
+            puts "FATAL ERROR: virt-who hasn't any valid cluster rescue data, check the sanity of your system"
+            exit 5
+          end
+        else
+          if @options[:verbose]
+            puts "      VERBOSE: No Hypervisor cluster data found in Satellite for #{system['name']}. Marking with 'none' as default"
+          end
+          # saving cluster name as none
+          cluster_name = 'none'
+          hypercluster.merge!({"facts"=>{'hypervisor::cluster'=>cluster_name}})
+          @clustered_hypervisor_list.push(hypercluster)
+        end
+      end
+    end
+
+    if @options[:debug]
+      puts "  DEBUG: Full clustered hypervisor data"
+      p @clustered_hypervisor_list
+    end
+    
+    # start counting guest and hosts for every cluster
+    if @options[:verbose]
+      puts "  VERBOSE: Complete retrieving cluster data of all Hypervisor. Starting counting Hosts and Guests."
+    end
+    ccluster_hash = {}
+    @clustered_hypervisor_list.each_with_index do |clu_hypervisor, index|
+      # if cluster is setted assign it to hypervisor name (hname)
+      if clu_hypervisor['facts']['hypervisor::cluster']
+        hname = clu_hypervisor['facts']['hypervisor::cluster']
+      else
+        hname = 'nil'
+      end
+      # if no cluster are already present in ccluster dict with all the data create the new entry
+      if not ccluster_hash.has_key?(hname)
+        ccluster_hash[hname] = {}
+        ccluster_hash[hname]['hosts'] = 1
+        ccluster_hash[hname]['guests'] = clu_hypervisor['subscription_facet_attributes']['virtual_guests'].count
+      else
+        # else add the number of guests to the current cluster one and increase the number of hosts by 1
+        ccluster_hash[hname]['hosts'] += 1
+        ccluster_hash[hname]['guests'] += clu_hypervisor['subscription_facet_attributes']['virtual_guests'].count
+      end
+    end
+
+    if @options[:debug]
+      puts "All cluster hosts / guests count:"
+      p ccluster_hash
+    end
+
+    # set variable to save for every cluster:
+    # index, name, number of hosts and number of guests
+    total_hosts_ok = 0
+    total_hosts_ko = 0
+    total_guests_ok = 0
+    total_guests_ko = 0
+    total_cluster_ok = 0
+    total_cluster_ko = 0
+    dict_index = 0
+
+    # list of all csv data to write in the file
+    csvcluster = []
+
+    # loop all the counted cluster
+    ccluster_hash.each do |key, dict|
+      # key is the name of the cluster
+      dict_name = key
+      # dict the hash with all the data about it as number of hosts and guests
+      dict_hosts = dict['hosts']
+      dict_guests = dict['guests']
+      # divide guests by hosts and round to the first 3 decimal digit
+      dict_ratio = dict_guests.to_f / dict_hosts.to_f
+      dict_ratio = dict_ratio.round(3)
+      dict_state = ""
+      # if ratio is >= densityvalue (default 5) add cluster to the high density cluster which has to be subscribed with VDC
+      if dict_ratio >= @options[:densityvalue].to_f
+        dict_state = 'OK'
+        # add to the global count of hosts and guests that are in high density cluster
+        total_hosts_ok += dict_hosts
+        total_guests_ok += dict_guests
+        total_cluster_ok += 1
+        # add the cluster name in full_cluster that represent the list of high density cluster
+        @full_cluster.push(dict_name)
+      else
+        # else if it's lower mark status as ERROR (light density) and remove vdc subscription to this cluster
+        dict_state = 'ERROR'
+        # add to the global count of hosts and guests that are in light density cluster
+        total_hosts_ko += dict_hosts
+        total_guests_ko += dict_guests
+        total_cluster_ko += 1
+        # add the cluster name in empty_cluster that represent the list of light density cluster
+        @empty_cluster.push(dict_name)
+      end
+      # add all the processed variables to cluster row for the CSV file
+      cluster_row = {}
+      cluster_row['index'] = dict_index
+      cluster_row['name'] = dict_name
+      cluster_row['hosts'] = dict_hosts
+      cluster_row['guests'] = dict_guests
+      cluster_row['ratio'] = dict_ratio
+      cluster_row['state'] = dict_state
+      csvcluster.push(cluster_row)
+      dict_index += 1
+    end
+
+    if @options[:verbose]
+      puts "  VERBOSE: Retrieve cluster data successfully"
+    end
+    if @options[:debug]
+      p csvcluster
+    end
+    if @options[:verbose]
+      puts "  VERBOSE: Start write file #{@options[:densityfile]} with cluster density"
+    end
+    # write the CSV data in :densityfile, data separated with ; to avoid mismatch with , or . for decimal value
+    CSV.open(@options[:densityfile], "wb", {:col_sep => ";"}) do |csv|
+      # header of csv
+      csv << ["Index","Cluster Name","Hosts","Guests","Ratio","State"]
+      # print for last the host without cluster (none) or no rescue data in it (nil)
+      none_index = -1
+      nil_index = -1
+      # first search for it and save it in none_index and nil_index
+      csvcluster.each do |cluster_row|
+        if cluster_row['name'] == 'none'
+          none_index = cluster_row['index'].to_i
+          next
+        end
+        if cluster_row['name'] == 'nil'
+          nil_index = cluster_row['index'].to_i
+          next
+        end
+        # if current cluster isn't nil or none write in the csv file
+        csv << [cluster_row['index'],cluster_row['name'],cluster_row['hosts'],cluster_row['guests'],cluster_row['ratio'],cluster_row['state']]
+      end
+      # if none cluster are present report it
+      if none_index > -1
+        none_cluster = (csvcluster.select {|clstr| clstr['name'] == 'none'}).first
+        csv << [none_cluster['index'].to_s, none_cluster['name'], none_cluster['hosts'], none_cluster['guests'], none_cluster['ratio'], none_cluster['state'] ]
+      end
+      # if nil cluster are present report it
+      if nil_index > -1
+        none_cluster = (csvcluster.select {|clstr| clstr['name'] == 'nil'}).first
+        csv << [none_cluster['index'].to_s, none_cluster['name'], none_cluster['hosts'], none_cluster['guests'], none_cluster['ratio'], none_cluster['state'] ]
+      end
+      # add also a global count of OK and ERROR cluster with their count
+      csv << ["Total", "OK Cluster", total_cluster_ok, "OK Hosts - Guests", total_hosts_ok, total_guests_ok]
+      csv << ["Total", "ERR Cluster", total_cluster_ko, "ERR Hosts - Guests", total_hosts_ko, total_guests_ko]
+    end
+
+    # write file with density status to :densityfile
+    puts "Density check of cluster completed. Saved in #{@options[:densityfile]}"
+    if @options[:debug]
+      puts "\n  DEBUG: List of cluster with full hypervisor"
+      p @full_cluster
+      puts "  DEBUG: List of cluster with empty hypervisor"
+      p @empty_cluster
+    end
+  end
+
+  # before attaching subscription to hosts, check if empty hypervisors with valid subscription are present
+  # if they are present remove their subscriptions to free subscription "slot"
+  if @options[:emptyvisor]
+    puts "Starting empty hypervisor subscription removal."
+    # check if "host_subscriptions" as api resource is available for correct removing of subscription and remove of host
+    if api.has_resource?(:host_subscriptions)
+      # if are present hypervisors to be removed then start checking their state
+      if not hypervisors_collection.empty?
+        # get the total number of hypervisors
+        remove_total = hypervisors_collection.count
+        if @options[:verbose]
+          puts "  VERBOSE: Found #{remove_total} hypervisors."
+        end
+        puts "Start checking if empty hypervisor are present to remove."
+        hypervisors_collection.each_with_index do |system, currentcount|
+          if @options[:verbose]
+            puts " VERBOSE: Current founded hypervisor #{currentcount+1}/#{remove_total}: #{system['name']} (#{system['id']})"
+          end
+          # check if almost 1 virtual_guest is present on subscription_facet_attributes
+          if system["subscription_facet_attributes"].has_key?("virtual_guests") and system["subscription_facet_attributes"]["virtual_guests"].count > 0
+            # if present skip, we must remove empty hypervisor
+            if @options[:verbose]
+              puts "   VERBOSE: Skipping #{system["name"]} as virtual guest count is #{system["subscription_facet_attributes"]["virtual_guests"].count}"
+            end
+            next
+          end
+          # if no guests present, retrieve all subscription data from that hypervisor
+          begin
+            rem_sub_response = api.resource(:host_subscriptions).call(:index, {:host_id => system['id']})
+            if @options[:debug]
+              puts "   DEBUG: Retrieved subscription data of #{system['name']}"
+              p rem_sub_response
+            end
+          rescue RestClient::NotFound
+            STDERR.puts "   ERROR: Hypervisor #{system['name']} subscription data not found. Skipping."
+            next
+          rescue Exception => e
+            puts "   ERROR: Unknow Error -- Unable to retrieve subscription data for hypervisor #{system['id']} #{system['name']}"
+            puts e.message
+            puts e.backtrace.inspect
+            puts e.response
+            exit 1
+          end
+
+          # check if data found (API return data successfully)
+          if not rem_sub_response.has_key?("total")
+            if @options[:verbose]
+              puts "    VERBOSE: Skipping Hypervisor as not valid data was retrieved from API"
+            end
+            next
+          end
+
+          # check if total > 0, then loop the result to remove the subscriptions
+          if rem_sub_response["total"].to_i > 0
+            puts "    Starting removing subscriptions from Hypervisor"
+            rem_sub_response["results"].each_with_index do |rem_sub, currentsub|
+              if @options[:verbose]
+                puts "      VERBOSE: Removing subscription #{currentsub+1} / #{rem_sub_response["total"].to_i} - #{rem_sub['id']}"
+              end
+              if @options[:debug]
+                puts "      DEBUG: Current subscription data"
+                p rem_sub
+              end
+              begin
+                # removing the subscription calling remove_subscriptions API
+                if not @options[:noop]
+                  api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => rem_sub['id']}]})
+                  puts "      Removed subscription #{rem_sub['id']} from hypervisor #{system['name']} / #{system['id']}"
+                else
+                  puts "      [noop]: sub #{rem_sub['id']} would be removed from hypervisor #{system['name']} / #{system['id']}"
+                end
+              rescue Exception => e
+                puts "      ERROR: Unknow Error - Unable to remove subscription #{rem_sub["id"]} from #{system["name"]}"
+                puts e.message
+                puts e.backtrace.inspect
+                puts e.response
+                exit 1
+              end
+            end
+          else
+            puts "    No subscription found attached to #{system['name']}. Nothing to do."
+          end
+        end
+      else
+        if @options[:verbose]
+          puts "  VERBOSE: No empty hypervisor with valid subscription found."
+        end
+      end
+    else
+      # due to lack of test and documentation, I can't write code that support Satellite < 6.2
+      puts "Subscription removal not supported for this version of Satellite. Skipping."
+    end
+  end
+
+end
+
+
 # main function
 def vdcupdate()
   # satellite url has to start with https or PUT will fail with http error
   unless @options[:uri].start_with?('https://')
-    abort " FATAL ERROR: the uri must start with https://"
+    abort "FATAL ERROR: the uri must start with https://"
   end
 
   # create api binding
-  api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]}, {:verify_ssl => @options[:verify_ssl]})
+  api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]})
 
   req = api.resource(:home).call(:status)
+
+  # check the version of Gem because we comunicate with a different version of Satellite if the version of Gem is newer than the 1.11 version or not.
+  # Gem 1.11 stands for Satellite 6.2
+  # Different version of Satellite require different value to assign to this variables to work in the proper way.
   if Gem::Version.new(req['version']) >= Gem::Version.new('1.11')
     @host_resource = :hosts
     @default_type = nil
@@ -129,40 +910,94 @@ def vdcupdate()
 
   # initialize variables
   systems = []
+  guests_systems = []
   system_details = {}
+  hosts_data = []
+  hosts_details_data = {}
   subs = {}
   page = 0
   req = nil
   cachefile = @options[:cachefile].to_s + "_org" + @options[:org].to_s
 
   # Fill systems array from API of satellite. Check for cache usage.
-  if @options[:usecache] and File.file?(cachefile)
-    begin
-      cacheyaml = YAML.load_file(cachefile)
-      systems = cacheyaml['systems']
-      system_details = cacheyaml['system_details']
-    rescue Exception
-      abort " FATAL ERROR: Failed to read cache file. re-run without --use-cache."
+  if @options[:usecache]
+    # if the file exists, let's open it
+    if File.file?(cachefile)
+      begin
+        cacheyaml = YAML.load_file(cachefile)
+        systems = cacheyaml['systems']
+        system_details = cacheyaml['system_details']
+      rescue Exception
+        abort "FATAL ERROR: Failed to read cache file. re-run without --read-from-cache."
+      end
+    else
+      puts "FATAL ERROR: --read-from-cache option requested, but the cache file is not currently present."
+      exit 5
     end
   else
+    puts "Starting systems collection from API. Please be patient."
     # no cache wanted or no cache file exists
     # checking all of the systems 100 at the time, from page 0 to latest
+    # after checking hypervisor and physical fetch all the guests hosts api data
+    page = 0
+    req = nil
+    # first of all, search for hypervisor as we would like to subscribe in order hypervisors, physicals and guests
+    # Currently there is a BZ opened as is not possible to absolute search hypervisor, physical and guest (BZ1635861)
+    search_options = "hypervisor=true and #{@options[:search]}"
     while (page == 0 or req['results'].length == req['per_page'].to_i)
       # increase page counter
       page += 1
       # get 100 results
       # filter to be applied: organization, and search options
-      req = api.resource(@host_resource).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100, :search => @options[:search]})
+      req = api.resource(@host_resource).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100, :search => search_options})
+      p req
       # concatenate output - all of the results
       systems.concat(req['results'])
     end
+    # count hypervisor
+    first_count = systems.count
+    puts "Completed hypervisor collection."
+    puts "Hypervisors entry: #{first_count}"
+
+    # research hosts filtering physical ones
+    page = 0
+    req = nil
+    search_options = "facts.virt::host_type = 'Not Applicable' and #{@options[:search]}"
+    while (page == 0 or req['results'].length == req['per_page'].to_i)
+      # increase page counter
+      page += 1
+      # get 100 results
+      # filter to be applied: organization, and search options
+      req = api.resource(@host_resource).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100, :search => search_options})
+      # concatenate output - all of the results
+      systems.concat(req['results'])
+    end
+    second_count = systems.count
+    puts "Completed physical collection."
+    puts "Physical entry: #{second_count - first_count}"
+    
+    # search guests one, filtering facts.virt::is_guest = true
+    search_options = "facts.virt::is_guest = true and #{@options[:search]}"
+    page = 0
+    req = nil
+    while (page == 0 or req['results'].length == req['per_page'].to_i)
+      page += 1
+      req = api.resource(@host_resource).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100, :search => search_options})
+      systems.concat(req['results'])
+    end
+    third_count = systems.count
+    puts "Completed guests collection."
+    puts "Hosts Entry: #{third_count - second_count}"
+    puts "Total Entry: #{third_count}"
   end
 
+  puts "Starting host subscription assignment"
+  systemstotal = systems.count
   # cycle for each system found
-  systems.each do |system|
+  systems.each_with_index do |system, currentcount|
     # initialize variable
-    has_desired_sub = nil 
-    desired_sub = nil 
+    has_desired_sub = nil
+    desired_sub = nil
     desired_sub_hash = nil
     desired_type = @default_type
     remove_other = true
@@ -171,26 +1006,131 @@ def vdcupdate()
     auto_attach = false
     keep_virt_only = false
     virtual_host = nil
+    desired_quantity = 1
+    sys_socket = 1
+    hypervisor_found = false
+    system_type = ""
+    this_system_cluster = ""
+    skip_hypervisor = false
 
-    # get detail for each system
+    full_sys_detail = {}
+
+    # add to array system the name of the system itself taken from id
+    if @options[:verbose]
+      puts " VERBOSE: Current system #{currentcount+1}/#{systemstotal}: #{system['name']} (#{system['id']})"
+    end
+
+    # get detail for the current system to be checked.
     if @options[:debug]
-      puts "DEBUG: detail of the current system to be checked:"
+      puts " DEBUG: detail of the current system to be checked:"
       p system
     end
-    sys = api.resource(@host_resource).call(:show, {:id => system['id'], :fields => 'full'})
-    # add to array system the name of the system itself taken from id
-    puts "Current system: #{system['name']} (#{system['id']})"
+
+    begin
+      sys = api.resource(@host_resource).call(:show, {:id => system['id'], :fields => 'full'})
+      full_sys_detail = sys
+      system_details.concat(sys)
+      if @options[:debug]
+        puts "  DEBUG: '#{system['name']}' id '#{system['id']}' @host_resource api data:"
+        p sys
+      end
+    rescue RestClient::NotFound
+      STDERR.puts "  ERROR: System name '#{system['name']}' not found. Is cache in use? Skipping."
+      next
+    rescue Exception => e
+      puts "  ERROR: Unknow Error -- Unable to retrieve details for host #{system['id']} #{system['name']}"
+      puts e.message
+      puts e.backtrace.inspect
+      puts e.response
+      exit 1
+    end
+    # check if the type requested match the host one
+    # fixme: complete the check with the new API version of find type of server and the desired sub type
+    # if type key in system detail is present then we are using satellite version < 6.2
+    if sys.has_key?("type")
+      # saving the type of the server
+      system_type = sys["type"].to_s
+      if @options[:debug]
+        puts "DEBUG: system #{sys["name"]} has system_type equals to #{system_type}"
+      end
+    else
+      # if sys['type'] isn't present check if facts data is available
+      if sys.has_key?("facts") and sys["facts"].is_a?(Hash)
+        # if has facts check is present facts.virt that has null value then the server isn't an hypervisor
+        if sys["facts"].has_key?("virt")
+          # check the existance of host_type and is_guest field
+          if sys["facts"].has_key?("virt::host_type") or sys["facts"].has_key?("virt::is_guest") or sys["facts"].has_key?("virt::is_virtual")
+            # if is_guest == true then the server is a virtual host, assign guest to subscription type
+            if sys['facts']['virt::is_guest'] == "true"
+              system_type = "Guests"
+              if @options[:debug]
+                puts "   DEBUG: system #{sys["name"]} has system_type assigned to Guests"
+              end
+            else
+              # if is_guest is false then check host_type to be equal to "Not Applicable"
+              if sys["facts"]["virt::host_type"] == "Not Applicable"
+                system_type = "Physical"
+                if @options[:debug]
+                  puts "   DEBUG: system #{sys["name"]} has system_type assigned to Physical"
+                end
+              else
+                puts "  FATAL ERROR: Host #{sys["name"]} isn't a guest but not a physical server. Check data"
+                exit 5
+              end
+            end
+          else
+            puts "  FATAL ERROR: Hosts #{sys["name"]} isn't an Hypervisor but host_type or is_guest fields are missing"
+            exit 5
+          end
+        else
+          # if the field is misisng then sys is an hypervisor
+          system_type = "Hypervisor"
+          if @options[:debug]
+            puts "   DEBUG: system #{sys["name"]} has system_type assigned to Hypervisors"
+          end
+        end
+      else
+        if @options[:debug]
+          puts "  DEBUG: Hosts #{sys["name"]} hasn't any facts data and type is missing. system_type assigned to Hypervisors."
+        end
+        system_type = "Hypervisor"
+      end
+    end
+    if @options[:debug]
+      puts "  DEBUG: System #{sys['name']} is a #{system_type}"
+    end
+
+    # if hosts found is Guests type, auto-attach
+    if system_type == 'Guests'
+      if @options[:debug]
+        puts "  DEBUG: System #{sys['name']} is a guest hosts, proceeding with auto-attach"
+      end
+      if not @options[:noop]
+        if api.has_resource?(:host_subscriptions)
+          api.resource(:host_subscriptions).call(:auto_attach, {:host_id => system['id']})
+        else
+          api.resource(@host_resource).call(:refresh_subscriptions, {:id => system['id']})
+        end
+        puts "    auto-attached guests #{sys['name']}"
+      else
+        puts "    [noop]: sub auto-attached"
+      end
+      if @options[:debug]
+        puts "    DEBUG: Sub auto-attached, passing to next hosts parsing"
+      end
+      next
+    end
 
     # for each item in yaml extract sub
     if @options[:debug]
-      puts "DEBUG: YAML dump"
+      puts " DEBUG: YAML dump with all definitions for the current system"
       p @yaml
     end
     @yaml[:subs].each do |sub|
       # extract the name of the host to be registered
       hostnameregex = Regexp.new(sub['hostname'])
       if @options[:debug]
-        puts "DEBUG: Current host: '#{sub['hostname'].inspect}', looking for pattern '#{hostnameregex.inspect}'"
+        puts "  DEBUG: Current pattern in sub: '#{sub['hostname'].inspect}', the extracted pattern is '#{hostnameregex.inspect}'"
       end
 
       # extract the (possible) virtual_host
@@ -201,6 +1141,9 @@ def vdcupdate()
       end
       # check if the current system match the desired one
       if hostnameregex.match(system['name'])
+        if @options[:debug]
+          puts " DEBUG: System '#{system['name']}' match the regexp"
+        end
         # if "type" has been specified on yaml file check if match.
         # the default is to check on "Hypervisor"
         # if DO NOT match, skip to next sub
@@ -208,46 +1151,219 @@ def vdcupdate()
         if sub.has_key?('type')
           desired_type = sub['type']
         end
-        if @default_type and sys['type'] != desired_type
-          puts "Skipping '#{system['name']}' as system type '#{sys['type']}' is different from desired '#{desired_type}'"
+        # extract current information from the system
+        if system_type != desired_type
+          if @options[:debug]
+            puts "  DEBUG: Checking the type of system"
+          end
+          if @options[:verbose]
+            puts "  VERBOSE: Skipping '#{system['name']}' as system type '#{system_type}' is different from desired '#{desired_type}'"
+          end
           next
+        else
+          if @options[:debug]
+            puts " DEBUG: System '#{system['name']}' has the correct system type '#{sys['type']}', desired '#{desired_type}'"
+          end
         end
 
         # if "registered_by" has been specified on yaml file check if match.
         # the default is to not check it, any value will be good
         # if DO NOT match, skip to next sub
-        # fixme: can't find this detail in new API
         if sub.has_key?('registered_by') and sub['registered_by'] and @supports_registered_by
           if sub['registered_by'] != system['registered_by']
-            puts "Skipping '#{system['name']}' as the system registered_by '#{system['registered_by']}' is different from desired '#{sub['registered_by']}'"
+            if @options[:verbose]
+              puts "  VERBOSE: Skipping '#{system['name']}' as the system registered_by '#{system['registered_by']}' is different from desired '#{sub['registered_by']}'"
+            end
             next
           end
         end
 
-        # check if we have a virtual_host
-        if virtualhostregex
-          system_details[system['id']] ||= api.resource(@host_resource).call(:show, {:organization_id => @options[:org], :id => system['id'], :fields => 'full'})
-          # fixme: look at subscription_facet_attributes
-          virtual_host_name = nil
-          if system_details[system['id']].has_key?('virtual_host') and system_details[system['id']]['virtual_host'] and system_details[system['id']]['virtual_host'].has_key?('name')
-            virtual_host_name = system_details[system['id']]['virtual_host']['name']
-          elsif system_details[system['id']].has_key?('subscription_facet_attributes') and system_details[system['id']]['subscription_facet_attributes'] and system_details[system['id']]['subscription_facet_attributes'].has_key?('virtual_host') and system_details[system['id']]['subscription_facet_attributes']['virtual_host'] and system_details[system['id']]['subscription_facet_attributes']['virtual_host'].has_key?('name')
-            virtual_host_name = system_details[system['id']]['subscription_facet_attributes']['virtual_host']['name']
-          end
-          if virtual_host_name
-            if not virtualhostregex.match(virtual_host_name)
-              puts "Skipping '#{system['name']}' as the system should be on #{sub['virtual_host']} but it is on #{virtual_host_name}"
+        # if hosts is an hypervisor, check if it's empty or in a low density cluster to attach or not subscription
+        if system_type == 'Hypervisor'
+          if @options[:density]
+            this_system_cluster = ""
+            @clustered_hypervisor_list.each do |clustered_hypervisor|
+              if clustered_hypervisor['name'] == sys['name']
+                if @options[:verbose]
+                  puts "  VERBOSE: Cluster data for subscription found"
+                end
+                this_system_cluster = clustered_hypervisor['facts']['hypervisor::cluster']
+                if @options[:debug]
+                  puts "    DEBUG: Cluster of #{sys['name']} is #{this_system_cluster}"
+                end
+              end
+            end
+            if @empty_cluster.include? this_system_cluster
+              # if empty remove and next
+              puts "  Hypervisor #{sys['name']} is in #{this_system_cluster} that is an empty cluster. Proced to removing subcription"
+              # start subscription removing from hypervisor
+              begin
+                rem_sub_response = api.resource(:host_subscriptions).call(:index, {:host_id => system['id']})
+                if @options[:debug]
+                  puts "   DEBUG: Retrieved subscription data of #{system['name']}"
+                  p rem_sub_response
+                end
+              rescue RestClient::NotFound
+                STDERR.puts "   ERROR: Hypervisor #{system['name']} subscription data not found. Skipping."
+                next
+              rescue Exception => e
+                puts "   ERROR: Unknow Error -- Unable to retrieve subscription data for hypervisor #{system['id']} #{system['name']}"
+                puts e.message
+                puts e.backtrace.inspect
+                puts e.response
+                exit 1
+              end
+              # check if total > 0, then loop the result to remove the subscriptions
+              if rem_sub_response["total"].to_i > 0
+                skip_hypervisor = true
+                puts "    Starting removing subscriptions from Hypervisor"
+                rem_sub_response["results"].each_with_index do |rem_sub, currentsub|
+                  if @options[:verbose]
+                    puts "      VERBOSE: Removing subscription #{currentsub+1} / #{rem_sub_response["total"].to_i} - #{rem_sub['id']}"
+                  end
+                  if @options[:debug]
+                    puts "      DEBUG: Current subscription data"
+                    p rem_sub
+                  end
+                  begin
+                    # removing the subscription
+                    if not @options[:noop]
+                      api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => sys['id'], :subscriptions => [{:id => rem_sub['id']}]})
+                      puts "      Removed subscription #{rem_sub['id']} from hypervisor #{sys['name']} / #{sys['id']}"
+                    else
+                      puts "      [noop]: sub #{rem_sub['id']} would be removed from hypervisor #{sys['name']} / #{sys['id']}"
+                    end
+                  rescue Exception => e
+                    puts "      ERROR: Unknow Error - Unable to remove subscription #{rem_sub["id"]} from #{sys["name"]}"
+                    puts e.message
+                    puts e.backtrace.inspect
+                    puts e.response
+                    exit 1
+                  end
+                end
+              else
+                puts "    No subscription found attached to #{sys['name']}. Nothing to do."
+              end
+
               next
+            else
+              puts "  Hypervisor #{sys['name']} is in #{this_system_cluster} that is a full cluster. Proced to subcription attaching"
+            end
+          end
+          
+          if @options[:emptyvisor]
+            # check if virtual_guests array in subscription_facet_attributes has elements, if empty skip to the next hypervisor
+            if @options[:verbose]
+              puts "    VERBOSE: Checking if #{sys['name']} has virtual_guests on it."
+            end
+            if sys["subscription_facet_attributes"].has_key?("virtual_guests") and sys["subscription_facet_attributes"]["virtual_guests"].count > 0
+              if @options[:verbose]
+                puts "      VERBOSE: Hosts isn't empty, proceed to subscription"
+              end
+              if @options[:debug]
+                puts "        DEBUG: Number of guests: #{sys["subscription_facet_attributes"]["virtual_guests"].count}"
+              end
+            else
+              if @options[:verbose]
+                puts "      VERBOSE: Skipping as #{sys["name"]} has no guests in it"
+              end
+              skip_hypervisor = true
+            end
+          end
+        end
+        if skip_hypervisor
+          next
+        end
+
+        # starting to get the correct number of socket to calculate the correct number of subscription to attach
+        if @options[:debug]
+          puts " DEBUG: Checking the number of socket for #{sys["name"]}"
+        end
+        # if the number of socket is setted, we can find the value from cpu::cpu_socket(s)
+        if sys.has_key?("facts") and sys["facts"].is_a?(Hash) and sys["facts"].has_key?("cpu::cpu_socket(s)")
+          # if the field is present check if it's a valid entry or not, if not exit with error
+          if sys["facts"]["cpu::cpu_socket(s)"].to_i > 0
+            # set sys_socket to the value of cpu::cpu_socket(s)
+            sys_socket = sys["facts"]["cpu::cpu_socket(s)"].to_i
+            if @options[:debug]
+              puts "   DEBUG: Setting sys_socket to #{desired_quantity} for #{sys["name"]}"
             end
           else
-             puts "Skipping '#{system['name']}' as the system should have a virtual host, but it does not."
-             next
+            puts "   FATAL ERROR: The number of socket for #{sys["name"]} it's equal or lower then 0."
+            exit 5
+          end
+        else
+          # system has not the socket available, check if virt-who is enabled
+          if @options[:virtwho]
+            # if available search for entry in the
+            if @options[:debug]
+              puts "   DEBUG: virt-who option enabled, starting rescue socket data for #{sys['name']}. Please be patient."
+            end
+            # if any virt-who valid entry is available search in the hash
+            if @virtwho_data
+              @parsed_hypervisors_array.each do |rescue_hypervisor|
+                # set hypervisor found to false, if there isn't any entry of current system
+                # in parsed_hypervisors_array set sys_socket to default value, 1
+                hypervisor_found = false
+                # check if rescue_hypervisor name is equal to the current system one
+                hypervisor_name_regexp = Regexp.new(rescue_hypervisor['uuid'])
+                if rescue_hypervisor.has_key?('name')
+                  hypervisor_name_regexp = Regexp.new(rescue_hypervisor['name'])
+                end
+                # if found
+                if hypervisor_name_regexp.match(sys['name'])
+                  # set the number of socket to the founded one, skip control because it's valid entry checked before
+                  sys_socket = rescue_hypervisor["facts"]["cpu.cpu_socket(s)"].to_i
+                  hypervisor_found = true
+                  if @options[:verbose]
+                    puts "      VERBOSE: Hypervisor rescue data found."
+                  end
+                  if @options[:debug]
+                    puts "        DEBUG: founded hypervisor rescue data:"
+                    p rescue_hypervisor
+                  end
+                  if @options[:debug]
+                    puts "      DEBUG: sys_socket set to #{sys_socket}"
+                  end
+                  break
+                else
+                  if @options[:debug]
+                    puts "      DEBUG: Skipping hypervisors #{rescue_hypervisor['uuid']} as name is different from #{sys['name']}"
+                  end
+                  next
+                end
+              end
+              if not hypervisor_found
+                if @options[:verbose]
+                  puts "      VERBOSE: Hypervisor #{sys["name"]} has no data in virt-who rescue data."
+                end
+                sys_socket = 1
+                if @options[:debug]
+                  puts "      DEBUG: Set default sys_socket 1 at #{sys["name"]}"
+                end
+              end
+            else
+              # if no virt-who valid entry us available then set default 1 to default
+              sys_socket = 1
+              if @options[:debug]
+                puts "   DEBUG: empty virt-who data, assigned 1 by default"
+              end
+            end
+          else
+            # if virt-who isn't enabled put 1 fixed as default
+            sys_socket = 1
+            if @options[:debug]
+              puts "   DEBUG: No cpu sockets entry found for #{sys['name']}, assigned 1 by default"
+            end
           end
         end
 
+        if @options[:debug]
+          puts " DEBUG: System '#{system['name']}' in scope, proceeding with assignment of variables"
+        end
         # set the desidered subscription to be associated
-        if sub.has_key?('sub')
-          desired_sub_hash = sub['sub']
+        if sub.has_key?('sub_parsed')
+          desired_sub_hash = sub['sub_parsed']
         end
         # if "remove_other" has been set, set the flag
         if sub.has_key?('remove_other')
@@ -269,14 +1385,19 @@ def vdcupdate()
         if sub.has_key?('keep_virt_only')
           keep_virt_only = sub['keep_virt_only']
         end
-        # if the system is found, stop cyclyng over yaml, 
+        # if the system is found, stop cyclyng over yaml,
         break
+      else
+        if @options[:verbose]
+          puts "  VERBOSE: skipping '#{system['name']}' as the system do not match following regexp:"
+          puts "           '#{sub['hostname']}'"
+        end
       end
     end
 
     # check if one or more hosts need a subscription
     if @options[:debug]
-      puts "DEBUG: desired_sub_hash value"
+      puts " DEBUG: desired_sub_hash value"
       p desired_sub_hash
     end
     if desired_sub_hash or not remove_subs.empty?
@@ -286,63 +1407,109 @@ def vdcupdate()
       end
 
       if @options[:debug]
-        puts " Checking subscription for #{system['id']}"
+        puts " DEBUG: Checking subscription for #{system['name']} (#{system['id']})"
       end
       has_desired_sub_hash = {}
       # for every product (hash key in yaml) check the desired subs
       desired_sub_hash.each do |product, desidered_product_sub_array|
         if @options[:debug]
-          puts "in the desired_sub_hash #{desidered_product_sub_array}"
+          puts "   DEBUG: in the desired_sub_hash #{desidered_product_sub_array}"
         end
         has_desired_sub = false
         # check the current associated subscription to this system
-        if api.has_resource?(:host_subscriptions)
-          req = api.resource(:host_subscriptions).call(:index, {:organization_id => @options[:org], :host_id => system['id'], :per_page => 100})
-        else
-          req = api.resource(:subscriptions).call(:index, {:organization_id => @options[:org], :system_id => system['id'], :per_page => 100})
+        begin
+          if api.has_resource?(:host_subscriptions)
+            req = api.resource(:host_subscriptions).call(:index, {:organization_id => @options[:org], :host_id => system['id'], :per_page => 100})
+          else
+            req = api.resource(:subscriptions).call(:index, {:organization_id => @options[:org], :system_id => system['id'], :per_page => 100})
+          end
+        # in case of error adding the subscription, stop the process
+        rescue RestClient::ExceptionWithResponse => e
+          STDERR.puts "  WARNING: Subscription problem -- unable to retrieve subscription for host #{system['id']} #{system['name']}. Message: #{e.response}"
+        rescue Exception => e
+          puts "  ERROR: Unkown Error -- unable to retrieve subscription for host #{system['id']} #{system['name']}"
+          puts e.message
+          puts e.backtrace.inspect
+          puts e.response
+          exit 1
         end
         # check a single subscription in the array
         req['results'].each do |sub|
           # move subscription_id key to cp_id, to have a standard API interface
           # Katello 2.2 do not have cp_id, in subscription_id there is the id of the sub
           # Katello 3.0 has cp_id with the id of the sub (to be confirmed) and subscription_id populated with an integer
-          if sub.has_key?('subscription_id') and !(sub.has_key?('cp_id')) and !(sub['subscription_id'].is_a?(Integer))
-            sub['cp_id'] = sub.delete('subscription_id')
-          end
-          if @options[:debug]
-            puts "DEBUG: subscription detail"
-            p sub
-            p desired_sub_hash.flatten(2)
-          end
           # check if the found cp_id is in the list of the current product, if it is, our job here is done
           if desidered_product_sub_array.include?(sub['cp_id'])
-            puts " subscription #{sub['cp_id']} for #{product} product is already attached to #{system['id']}"
+
+            sockets_limit = 1
+            # get the sockets limit of the subscription and check if the quantity to attach is correct
+            if @options[:debug]
+              puts "  DEBUG: Checking socket limits of sub #{sub['id']}"
+            end
+            if sub.has_key?('sockets')
+              if sub['sockets'].to_i > 0
+                sockets_limit = sub['sockets'].to_i
+                if @options[:debug]
+                  puts "    DEBUG: Socket limit of sub #{sub['id']} is #{sub['sockets']}"
+                end
+              else
+                puts "FATAL ERROR: The Sockets Limit of subscription #{sub['id']} is not valid"
+                exit 5
+              end
+            else
+              if @options[:debug]
+                puts "    DEBUG: No subscription socket limit specification found. Setting 1 by default"
+              end
+              sockets_limit = 1
+            end
+            system_socket = sys_socket
+            total_subscriptions = (system_socket.to_f/sockets_limit.to_f).ceil
+            puts "  #{system['name']} need #{total_subscriptions} subscriptions for sub #{sub['id']}"
+            subscriptions_needed = total_subscriptions - sub['quantity_consumed'].to_i
+            if subscriptions_needed == 0
+              puts "  subscription #{sub['cp_id']} for #{product} product is already attached to #{system['name']}"
+            else
+              puts "  subscription #{sub['cp_id']} for #{product} product is attached to #{system['name']}, but still need #{subscriptions_needed} sub"
+              if sub['available'] >= subscriptions_needed
+                if not @options[:noop]
+                  # todo: first remove the subs and reattach with the right number
+                  api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => subscriptions_needed}]})
+
+                  puts "    Added #{subscriptions_needed} more subscriptions of #{sub['id']} to #{system['name']}"
+                else
+                  puts "    [noop]: Would be added #{subscriptions_needed} more subscriptions of #{sub['id']} to #{system['name']}"
+                end
+              else
+                puts " Skipping attaching the remaining subscription of #{sub['id']} for #{system['name']} because #{subscriptions_needed} requested but #{sub['available']} available"
+              end
+            end
             has_desired_sub = true
           # else, if this is not among the desired subscriptions (ALL of them, not only the current product)
           # and remove_other is set, remove this subscription to the system
           elsif sub['cp_id'] != nil and not desired_sub_hash.flatten(2).include?(sub['cp_id']) and (remove_other or remove_subs.include?(sub['cp_id'])) and not (keep_virt_only and sub.has_key?('virt_only') and sub['virt_only']) and not keep_subs.include?(sub['cp_id'])
-            puts " removing subscription #{sub['cp_id']} from system #{system['id']}"
+            puts "  removing subscription #{sub['cp_id']} from system #{system['name']}"
+            puts "  [noop] removed"
             if not @options[:noop]
               if api.has_resource?(:host_subscriptions)
                 api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
               else
                 api.resource(:subscriptions).call(:destroy, {:system_id => system['id'], :id => sub['id']})
               end
-              puts " removed"
+              puts "  removed"
             else
-              puts " [noop] removed"
+              puts "  [noop] removed"
             end
           end
         end
         # if all of the subscriptions marked for this product is missing, mark it to be added
         if not desidered_product_sub_array.empty? and not has_desired_sub
-          puts "Subscription for product " + product.to_s + " currently missing. Set for the attach."
+          puts "  Subscription on host #{system['name']} for product " + product.to_s + " currently missing. Set for the attach."
           has_desired_sub_hash[product] = desidered_product_sub_array
         end
       end
- 
+
       if @options[:debug]
-        puts "DEBUG: has_desired_sub_hash: #{has_desired_sub_hash}"
+        puts "  DEBUG: has_desired_sub_hash: #{has_desired_sub_hash}"
       end
 
       # if the system do not has proper subscritions, attach it
@@ -352,7 +1519,7 @@ def vdcupdate()
           # cycle for each subscription
           desired_subs_hash.each do |desired_sub|
             if @options[:debug]
-              puts "DEBUG: current subscription to be checked"
+              puts "  DEBUG: current subscription to be checked"
               p desired_sub
             end
             # if subs[desired_sub] is false, retrieve the current subscription detail
@@ -361,21 +1528,46 @@ def vdcupdate()
               subs[desired_sub] ||= api.resource(:subscriptions).call(:index, {:search => "id=#{desired_sub}", :organization_id => @options[:org]})['results'][0]
             # in case of error adding the subscription, stop the process
             rescue Exception => e
-              puts " ERROR: unable to retrieve subscription #{desired_sub}"
+              puts "  ERROR: unable to retrieve subscription #{desired_sub}"
               puts e.message
               puts e.backtrace.inspect
               exit 1
             end
-            # Currently Satellite do not know for Hypervisor ESXi type the number of the socket. Set to 1.
-            desired_quantity = 1
+
+            # Start checking the needed subscriptions for every hosts
+            system_socket = sys_socket
+            puts " Start calculating the correct number of subscriptions #{subs[desired_sub]['id']} needed for #{system['name']}"
+            # if field socket is present, the max sockets managed for every subscription is in sockets field
+            if subs[desired_sub].has_key?('sockets')
+              if subs[desired_sub]['sockets'].to_i > 0
+                sub_socket = subs[desired_sub]['sockets'].to_i
+                if @options[:debug]
+                  puts "    DEBUG: Subscription #{subs[desired_sub]['id']} limit of socket is #{sub_socket}"
+                end
+              else
+                puts "FATAL ERROR: The limit for the number of sockets of #{subs[desired_sub]['name']} (ID: #{subs[desired_sub]['id']}, CPID: #{subs[desired_sub]['cp_id']}) is invalid"
+                exit 5
+              end
+            else
+            # if no subscription socket limit data is present use 1 by default
+              if @options[:debug]
+                puts "    DEBUG: No subscription socket limit specification found. Setting 1 by default"
+              end
+            end
+            # calculate the correct number, eg: if system has 8 sockets but subs grant only 2 sockets, we need 4 subs
+            # ceiling data it's to prevent 0 subs needed if hosts has 1 socket but subs has 2 or more like sockets limit
+            desired_quantity = (system_socket.to_f/sub_socket.to_f).ceil
+            puts "   The number of subscriptions needed for #{desired_sub} (id: #{subs[desired_sub]['id']}) is of #{desired_quantity}"
+
             # if there are not enough available subscriptions check the next available
             if desired_quantity > subs[desired_sub]['available'].to_i and subs[desired_sub]['quantity'].to_i != -1
-              puts " cannot add subscription #{desired_sub} (id: #{subs[desired_sub]['id']}): only #{subs[desired_sub]['available']} available, but #{desired_quantity} requested"
+              puts "   Cannot add subscription #{desired_sub} (id: #{subs[desired_sub]['id']}): only #{subs[desired_sub]['available']} available, but #{desired_quantity} requested"
               next
             end
+
             # if requirements are met, add the subscription
-            puts " adding #{desired_sub} for #{product} (id: #{subs[desired_sub]['id']})"
-  
+            puts "   adding #{desired_sub} for #{product} (id: #{subs[desired_sub]['id']})"
+
             # fix the number of the available and consumed subscription because this will be retrieved only once
             subs[desired_sub]['available'] -= desired_quantity
             subs[desired_sub]['consumed'] += desired_quantity
@@ -387,18 +1579,20 @@ def vdcupdate()
                 else
                   api.resource(:subscriptions).call(:create, {:system_id => system['id'], :subscriptions => [{:id => desired_sub, :quantity => desired_quantity}]})
                 end
-                puts " added #{desired_sub} for #{product} in system #{system['id']}"
+                puts "    Added #{desired_sub} for #{product} in system #{system['name']}"
                 # stop cycling over the subscription available since the first available has been added
                 break
               # in case of error adding the subscription, stop the process
+              rescue RestClient::ExceptionWithResponse => e
+                STDERR.puts "  WARNING: Subscription problem -- unable to attach subscription for host #{system['id']} #{system['name']}. Message: #{e.response}"
               rescue Exception => e
-                puts " ERROR: unable to attach subscription"
-                puts e.message
-                puts e.backtrace.inspect
+                STDERR.puts "  ERROR: unable to attach subscription"
+                STDERR.puts e.message
+                STDERR.puts e.backtrace.inspect
                 exit 1
               end
             else
-              puts " [noop] added #{desired_sub} for #{product} in system #{system['id']}"
+              puts "    [noop] Added #{desired_sub} for #{product} in system #{system['name']}"
               break
             end
           end
@@ -406,24 +1600,14 @@ def vdcupdate()
       end
     end
 
-    if auto_attach
-       puts " auto-attaching subs to system #{system['id']}"
-       if not @options[:noop]
-         if api.has_resource?(:host_subscriptions)
-           api.resource(:host_subscriptions).call(:auto_attach, {:host_id => system['id']})
-         else
-           api.resource(@host_resource).call(:refresh_subscriptions, {:id => system['id']})
-         end
-       else
-         puts " [noop] auto-attached"
-       end
-    end
   end
 
   if not @options[:usecache]
     # always write the cache file at the end, to be used in the future
-    File.open(cachefile, 'w') {|f| f.write(YAML.dump({'systems' => systems, 'system_details' => system_details})) }
+    puts "Writing YAML file into cache file #{cachefile}"
+    File.open(cachefile, 'w') {|f| f.write(YAML.dump({'systems' => systems, 'system_details' => system_details}, 'subs' => @yaml[:subs])) }
   end
 end
 
+checksubs
 vdcupdate
