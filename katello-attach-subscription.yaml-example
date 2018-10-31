@@ -5,9 +5,8 @@
   :uri: https://localhost
   :org: 1
 :subs:
-  - 
+  -
     hostname: esxi[0-9]\.example\.com
-    registered_by: "85e65e06-a117-4e8e-8aa1-72cb1e00b930"
     sub:
       rhel:
         - 4543828edcf35158c30abc3554c1e36a

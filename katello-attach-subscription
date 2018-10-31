@@ -118,7 +118,6 @@ def vdcupdate()
   end
 
   @default_type = nil
-  @supports_registered_by = false
 
   # initialize variables
   systems = []
@@ -209,16 +208,6 @@ def vdcupdate()
           next
         end
 
-        # if "registered_by" has been specified on yaml file check if match.
-        # the default is to not check it, any value will be good
-        # if DO NOT match, skip to next sub
-        # fixme: can't find this detail in new API
-        if sub.has_key?('registered_by') and sub['registered_by'] and @supports_registered_by
-          if sub['registered_by'] != system['registered_by']
-            puts "Skipping '#{system['name']}' as the system registered_by '#{system['registered_by']}' is different from desired '#{sub['registered_by']}'"
-            next
-          end
-        end
 
         # check if we have a virtual_host
         if virtualhostregex

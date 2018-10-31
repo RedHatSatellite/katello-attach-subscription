@@ -55,13 +55,10 @@ The `subs` section is an array of hashes which describe the subscriptions to be 
 Each subscription hash has an `hostname` entry which will be used as an regular expression to match the hostname of the content host in Katello.
 It also has a `sub` entry, which is an hash of array.
 The hash has product as key, which is a string to identify the type of subscription, and the content is an array of RedHat Pool ID of subscription to be attached to the host.
-An optional `registered_by` entry can be given to limit the matching to hosts that were submitted by a specific other host (a value of `null` or `~` skips check). This is the uid of the system running `virt-who` that has registered the `hostname` in Satellite.
-The `type` entry can be set if the host in question is not a hypervisor, but should get a subscription.
 
     :subs:
       - 
         hostname: esxi[0-9]\.example\.com
-        registered_by: "85e65e06-a117-4e8e-8aa1-72cb1e00b930"
         sub:
           rhel:
             - 4543828edcf35158c30abc3554c1e36a
