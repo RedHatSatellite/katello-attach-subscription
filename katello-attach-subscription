@@ -110,6 +110,22 @@ end
 # create api binding
 @api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]}, {:verify_ssl => @options[:verify_ssl]})
 
+def fetch_all_results(resource, action, params)
+  page = 0
+  req = nil
+  results = []
+  while (page == 0 or req['results'].length == req['per_page'].to_i)
+    # increase page counter
+    page += 1
+    # get 100 results
+    params.merge!({:page => page, :per_page => 100})
+    req = @api.resource(resource).call(action, params)
+    # concatenate output - all of the results
+    results.concat(req['results'])
+  end
+  results
+end
+
 # main function
 def vdcupdate()
   # satellite url has to start with https or PUT will fail with http error
@@ -138,16 +154,7 @@ def vdcupdate()
     end
   else
     # no cache wanted or no cache file exists
-    # checking all of the systems 100 at the time, from page 0 to latest
-    while (page == 0 or req['results'].length == req['per_page'].to_i)
-      # increase page counter
-      page += 1
-      # get 100 results
-      # filter to be applied: organization, and search options
-      req = @api.resource(:hosts).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100, :search => @options[:search]})
-      # concatenate output - all of the results
-      systems.concat(req['results'])
-    end
+    systems = fetch_all_results(:host, :index, {:organization_id => @options[:org], :search => @options[:search]})
   end
 
   # cycle for each system found
