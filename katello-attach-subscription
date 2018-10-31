@@ -139,7 +139,6 @@ def vdcupdate()
   systems = []
   system_details = {}
   subs = {}
-  page = 0
   req = nil
   cachefile = @options[:cachefile].to_s + "_org" + @options[:org].to_s
 
