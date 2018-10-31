@@ -83,6 +83,18 @@ The `type` entry can be set if the host in question is not a hypervisor, but sho
           rhel:
             - b9548e4c9fa20b85f264fbaa2470b726
 
+
+## Permissions
+
+The following permissions are required to run `katello-attach-subscription`:
+
+| Resource | Permissions |
+|----------|-------------|
+| Fact Value | view_facts|
+| Host | view_hosts, edit_hosts|
+| Subscription | view_subscriptions, attach_subscriptions, unattach_subscriptions|
+
+
 ## Caveats
 
 Currently Satellite is not able to save fact that contain the socket number. Candlepin 2.0 (bug to be linked) and `Virt-who` 0.16 are needed `https://bugzilla.redhat.com/show_bug.cgi?id=1307024`.

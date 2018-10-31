@@ -110,13 +110,17 @@ end
 def vdcupdate()
   # satellite url has to start with https or PUT will fail with http error
   unless @options[:uri].start_with?('https://')
-    abort " FATAL ERROR: the uri must start with https://"
+    abort "FATAL ERROR: the uri must start with https://"
   end
 
   # create api binding
   api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]}, {:verify_ssl => @options[:verify_ssl]})
 
   req = api.resource(:home).call(:status)
+
+  # check the version of Gem because we comunicate with a different version of Satellite if the version of Gem is newer than the 1.11 version or not.
+  # Gem 1.11 stands for Satellite 6.2
+  # Different version of Satellite require different value to assign to this variables to work in the proper way.
   if Gem::Version.new(req['version']) >= Gem::Version.new('1.11')
     @host_resource = :hosts
     @default_type = nil
@@ -161,8 +165,8 @@ def vdcupdate()
   # cycle for each system found
   systems.each do |system|
     # initialize variable
-    has_desired_sub = nil 
-    desired_sub = nil 
+    has_desired_sub = nil
+    desired_sub = nil
     desired_sub_hash = nil
     desired_type = @default_type
     remove_other = true
@@ -174,7 +178,7 @@ def vdcupdate()
 
     # get detail for each system
     if @options[:debug]
-      puts "DEBUG: detail of the current system to be checked:"
+      puts " DEBUG: detail of the current system to be checked:"
       p system
     end
     sys = api.resource(@host_resource).call(:show, {:id => system['id'], :fields => 'full'})
@@ -183,14 +187,14 @@ def vdcupdate()
 
     # for each item in yaml extract sub
     if @options[:debug]
-      puts "DEBUG: YAML dump"
+      puts " DEBUG: YAML dump with all definitions for the current system"
       p @yaml
     end
     @yaml[:subs].each do |sub|
       # extract the name of the host to be registered
       hostnameregex = Regexp.new(sub['hostname'])
       if @options[:debug]
-        puts "DEBUG: Current host: '#{sub['hostname'].inspect}', looking for pattern '#{hostnameregex.inspect}'"
+        puts "  DEBUG: Current pattern in sub: '#{sub['hostname'].inspect}', the extracted pattern is '#{hostnameregex.inspect}'"
       end
 
       # extract the (possible) virtual_host
@@ -201,6 +205,9 @@ def vdcupdate()
       end
       # check if the current system match the desired one
       if hostnameregex.match(system['name'])
+        if @options[:debug]
+          puts " DEBUG: System '#{system['name']}' match the regexp"
+        end
         # if "type" has been specified on yaml file check if match.
         # the default is to check on "Hypervisor"
         # if DO NOT match, skip to next sub
@@ -269,14 +276,19 @@ def vdcupdate()
         if sub.has_key?('keep_virt_only')
           keep_virt_only = sub['keep_virt_only']
         end
-        # if the system is found, stop cyclyng over yaml, 
+        # if the system is found, stop cyclyng over yaml,
         break
+      else
+        if @options[:verbose]
+          puts "  VERBOSE: skipping '#{system['name']}' as the system do not match following regexp:"
+          puts "           '#{sub['hostname']}'"
+        end
       end
     end
 
     # check if one or more hosts need a subscription
     if @options[:debug]
-      puts "DEBUG: desired_sub_hash value"
+      puts " DEBUG: desired_sub_hash value"
       p desired_sub_hash
     end
     if desired_sub_hash or not remove_subs.empty?
@@ -286,13 +298,13 @@ def vdcupdate()
       end
 
       if @options[:debug]
-        puts " Checking subscription for #{system['id']}"
+        puts " DEBUG: Checking subscription for #{system['name']} (#{system['id']})"
       end
       has_desired_sub_hash = {}
       # for every product (hash key in yaml) check the desired subs
       desired_sub_hash.each do |product, desidered_product_sub_array|
         if @options[:debug]
-          puts "in the desired_sub_hash #{desidered_product_sub_array}"
+          puts "   DEBUG: in the desired_sub_hash #{desidered_product_sub_array}"
         end
         has_desired_sub = false
         # check the current associated subscription to this system
@@ -328,21 +340,21 @@ def vdcupdate()
               else
                 api.resource(:subscriptions).call(:destroy, {:system_id => system['id'], :id => sub['id']})
               end
-              puts " removed"
+              puts "  removed"
             else
-              puts " [noop] removed"
+              puts "  [noop] removed"
             end
           end
         end
         # if all of the subscriptions marked for this product is missing, mark it to be added
         if not desidered_product_sub_array.empty? and not has_desired_sub
-          puts "Subscription for product " + product.to_s + " currently missing. Set for the attach."
+          puts "  Subscription on host #{system['name']} for product " + product.to_s + " currently missing. Set for the attach."
           has_desired_sub_hash[product] = desidered_product_sub_array
         end
       end
- 
+
       if @options[:debug]
-        puts "DEBUG: has_desired_sub_hash: #{has_desired_sub_hash}"
+        puts "  DEBUG: has_desired_sub_hash: #{has_desired_sub_hash}"
       end
 
       # if the system do not has proper subscritions, attach it
@@ -352,7 +364,7 @@ def vdcupdate()
           # cycle for each subscription
           desired_subs_hash.each do |desired_sub|
             if @options[:debug]
-              puts "DEBUG: current subscription to be checked"
+              puts "  DEBUG: current subscription to be checked"
               p desired_sub
             end
             # if subs[desired_sub] is false, retrieve the current subscription detail
@@ -361,7 +373,7 @@ def vdcupdate()
               subs[desired_sub] ||= api.resource(:subscriptions).call(:index, {:search => "id=#{desired_sub}", :organization_id => @options[:org]})['results'][0]
             # in case of error adding the subscription, stop the process
             rescue Exception => e
-              puts " ERROR: unable to retrieve subscription #{desired_sub}"
+              puts "  ERROR: unable to retrieve subscription #{desired_sub}"
               puts e.message
               puts e.backtrace.inspect
               exit 1
@@ -370,12 +382,13 @@ def vdcupdate()
             desired_quantity = 1
             # if there are not enough available subscriptions check the next available
             if desired_quantity > subs[desired_sub]['available'].to_i and subs[desired_sub]['quantity'].to_i != -1
-              puts " cannot add subscription #{desired_sub} (id: #{subs[desired_sub]['id']}): only #{subs[desired_sub]['available']} available, but #{desired_quantity} requested"
+              puts "   Cannot add subscription #{desired_sub} (id: #{subs[desired_sub]['id']}): only #{subs[desired_sub]['available']} available, but #{desired_quantity} requested"
               next
             end
+
             # if requirements are met, add the subscription
-            puts " adding #{desired_sub} for #{product} (id: #{subs[desired_sub]['id']})"
-  
+            puts "   adding #{desired_sub} for #{product} (id: #{subs[desired_sub]['id']})"
+
             # fix the number of the available and consumed subscription because this will be retrieved only once
             subs[desired_sub]['available'] -= desired_quantity
             subs[desired_sub]['consumed'] += desired_quantity
@@ -387,7 +400,7 @@ def vdcupdate()
                 else
                   api.resource(:subscriptions).call(:create, {:system_id => system['id'], :subscriptions => [{:id => desired_sub, :quantity => desired_quantity}]})
                 end
-                puts " added #{desired_sub} for #{product} in system #{system['id']}"
+                puts "    Added #{desired_sub} for #{product} in system #{system['name']}"
                 # stop cycling over the subscription available since the first available has been added
                 break
               # in case of error adding the subscription, stop the process
@@ -398,7 +411,7 @@ def vdcupdate()
                 exit 1
               end
             else
-              puts " [noop] added #{desired_sub} for #{product} in system #{system['id']}"
+              puts "    [noop] Added #{desired_sub} for #{product} in system #{system['name']}"
               break
             end
           end
