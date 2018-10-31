@@ -117,20 +117,8 @@ def vdcupdate()
     abort "FATAL ERROR: the uri must start with https://"
   end
 
-  req = @api.resource(:home).call(:status)
-
-  # check the version of Gem because we comunicate with a different version of Satellite if the version of Gem is newer than the 1.11 version or not.
-  # Gem 1.11 stands for Satellite 6.2
-  # Different version of Satellite require different value to assign to this variables to work in the proper way.
-  if Gem::Version.new(req['version']) >= Gem::Version.new('1.11')
-    @host_resource = :hosts
-    @default_type = nil
-    @supports_registered_by = false
-  else
-    @host_resource = :systems
-    @default_type = 'Hypervisor'
-    @supports_registered_by = true
-  end
+  @default_type = nil
+  @supports_registered_by = false
 
   # initialize variables
   systems = []
@@ -157,7 +145,7 @@ def vdcupdate()
       page += 1
       # get 100 results
       # filter to be applied: organization, and search options
-      req = @api.resource(@host_resource).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100, :search => @options[:search]})
+      req = @api.resource(:hosts).call(:index, {:organization_id => @options[:org], :page => page, :per_page => 100, :search => @options[:search]})
       # concatenate output - all of the results
       systems.concat(req['results'])
     end
@@ -182,7 +170,7 @@ def vdcupdate()
       puts " DEBUG: detail of the current system to be checked:"
       p system
     end
-    sys = @api.resource(@host_resource).call(:show, {:id => system['id'], :fields => 'full'})
+    sys = @api.resource(:hosts).call(:show, {:id => system['id'], :fields => 'full'})
     # add to array system the name of the system itself taken from id
     puts "Current system: #{system['name']} (#{system['id']})"
 
@@ -234,7 +222,7 @@ def vdcupdate()
 
         # check if we have a virtual_host
         if virtualhostregex
-          system_details[system['id']] ||= @api.resource(@host_resource).call(:show, {:organization_id => @options[:org], :id => system['id'], :fields => 'full'})
+          system_details[system['id']] ||= @api.resource(:hosts).call(:show, {:organization_id => @options[:org], :id => system['id'], :fields => 'full'})
           # fixme: look at subscription_facet_attributes
           virtual_host_name = nil
           if system_details[system['id']].has_key?('virtual_host') and system_details[system['id']]['virtual_host'] and system_details[system['id']]['virtual_host'].has_key?('name')
