@@ -1,3 +1,5 @@
+source 'https://rubygems.org'
+
 gem 'apipie-bindings'
 group :development do
   gem 'pry-nav'
