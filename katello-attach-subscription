@@ -44,13 +44,13 @@ $stdout.sync = true
   :debug            => false,
   :verbose          => false,
   :search           => nil,
-  :usedhypervsior   => false,
   :density          => false,
   :densityfile      => 'cluster-state.csv',
   :guestreportfile  => 'guest-report.csv',
   :densityvalue     => 5,
   :subreport        => false,
-  :subreportfile    => 'sub-report.csv'
+  :subreportfile    => 'sub-report.csv',
+  :verify_ssl       => true
 }
 
 @options = {
@@ -83,13 +83,6 @@ optparse = OptionParser.new do |opts|
   opts.on("-n", "--noop", "do not actually execute anything") do
     @options[:noop] = true
   end
-
-  # this search options doesn't work with satellite >= 6.2 for now, if option is enabled and Satellite version is wrong, the code exit with error
-  opts.on("-H", "--used-hypervisors-only", "only search for hypervisors that are in use") do
-    @options[:search] = 'virtual_guests:*'
-    @options[:usedhypervsior] = true
-  end
-
   opts.on("-s", "--search=SEARCH", "search for machines matching this string only") do |s|
     @options[:search] = s
   end
@@ -132,6 +125,9 @@ optparse = OptionParser.new do |opts|
   opts.on("-d", "--debug", "debug output for the script") do
     @options[:verbose] = true
     @options[:debug] = true
+  end
+  opts.on("--no-verify-ssl", "don't verify SSL certs") do
+    @options[:verify_ssl] = false
   end
 end
 optparse.parse!
@@ -185,16 +181,7 @@ end
 end
 
 # binding api
-@api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]})
-
-# check if -H options is enabled, if true, check the version of Gem as Satellite >= 6.2 doesn't support
-if @options[:usedhypervsior]
-  req = @api.resource(:home).call(:status)
-  if Gem::Version.new(req['version']) >= Gem::Version.new('1.11')
-    puts "FATAL ERROR: -H --used-hypervisors-only options aren't supported for Satellite >= 6.2"
-    exit 5
-  end
-end
+@api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]}, {:verify_ssl => @options[:verify_ssl]})
 
 # global variable of the script
 
@@ -771,9 +758,7 @@ def vdcupdate()
     # preparing search_options to be add at parameters to api call
     # if search options are present check string to become @options[:search] to 'and #{@options[:search]}'
     # final search_options would become 'name~virt-who-%' or 'name~virt-who-% and @options[:search]'
-    if @options[:search].to_s.length > 0
-      @options[:search] = " and #{@options[:search]}"
-    end
+    @options[:search] = " and #{@options[:search]}" unless @options[:search].to_s.empty?
     # checking all of the systems 100 at the time, from page 0 to latest
     # first of all, search for hypervisor as we would like to subscribe in order hypervisors, physicals and guests
     # Currently there is a BZ opened as is not possible to absolute search hypervisor, physical and guest (BZ1635861)
