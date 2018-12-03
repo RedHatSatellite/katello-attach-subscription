@@ -1,1 +1,2 @@
+require_relative 'katello_attach_subscription/fact_analyzer'
 require_relative 'katello_attach_subscription/version'
