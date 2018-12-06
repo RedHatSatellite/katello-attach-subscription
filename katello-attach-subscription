@@ -269,8 +269,15 @@ def checksubs()
               puts "   VERBOSE: parsing subscription '#{subscription_item}'"
             end
             # fetch all the result searching subscription by their name, stored in subscription_item
-            # append 'name=' before the search criteria to search exactly that subscription name
-            search_options = 'name="'+subscription_item+'"'
+
+            # if subscription_item is an hash search for key = value, either search for the value
+            if subscription_item.is_a?(Hash)
+              sub_item_key = subscription_item.keys.first.to_s
+              search_options = "#{sub_item_key}=#{subscription_item[sub_item_key]}"
+            else
+              search_options = subscription_item
+            end
+
             parsed_subscription = fetch_all_results(:subscriptions,:index,{:search => search_options, :available_for => "host"})
             # if the lookup has given no results at all, no subscriptions has to be added
             if parsed_subscription.empty?
@@ -414,8 +421,8 @@ def checksubs()
   if @options[:emptyhypervisor] or @options[:density]
     puts "Starting retrieving hypervisor data. Please be patient."
     hypervisors_list = []
-    # fetch all the result searching hosts using 'name~virt-who-%' as filter
-    hypervisors_list = fetch_all_results(:hosts, :index, {:search => "name~virt-who-%"})
+    # fetch all the result searching hosts using 'hypervisor=true' as filter
+    hypervisors_list = fetch_all_results(:hosts, :index, {:search => "hypervisor=true"})
     if @options[:verbose]
       puts "  VERBOSE: Start retrieving full data for every hypervisors."
     end
@@ -527,7 +534,7 @@ def checksubs()
     if @options[:subreport]
       printguestreport()
     end
-      
+
     if @options[:debug]
       puts "All cluster hosts / guests count data:"
       p ccluster_hash
@@ -736,7 +743,6 @@ end
 # main function
 def vdcupdate()
   @default_type = nil
-  @supports_registered_by = false
   # initialize variables
   systems = []
   guests_systems = []
@@ -757,12 +763,12 @@ def vdcupdate()
     puts "Starting host collection from API. Please be patient."
     # preparing search_options to be add at parameters to api call
     # if search options are present check string to become @options[:search] to 'and #{@options[:search]}'
-    # final search_options would become 'name~virt-who-%' or 'name~virt-who-% and @options[:search]'
+    # final search_options would become 'hypervisor=true' or 'hypervisor=true and @options[:search]'
     @options[:search] = " and #{@options[:search]}" unless @options[:search].to_s.empty?
     # checking all of the systems 100 at the time, from page 0 to latest
     # first of all, search for hypervisor as we would like to subscribe in order hypervisors, physicals and guests
     # Currently there is a BZ opened as is not possible to absolute search hypervisor, physical and guest (BZ1635861)
-    search_options = "name~virt-who-%#{@options[:search]}"
+    search_options = "hypervisor=true#{@options[:search]}"
     puts "Searching for Hypervisors"
     systems = fetch_all_results(:hosts, :index, {:search => search_options})
     hypervisor_count = systems.count
@@ -853,29 +859,26 @@ def vdcupdate()
         desired_type = sub['type']
       end
       # extract current information from the system
-      if system_type != desired_type
-        if @options[:debug]
-          puts "  DEBUG: Checking the type of system"
-        end
-        if @options[:verbose]
-          puts "  VERBOSE: Skipping '#{system['name']}' as system type '#{system_type}' is different from desired '#{desired_type}'"
-        end
-        next
-      else
-        if @options[:debug]
-          puts " DEBUG: System '#{system['name']}' has the correct system type '#{system_type}', desired '#{desired_type}'"
-        end
-      end
-
-      # if "registered_by" has been specified on yaml file check if match.
-      # the default is to not check it, any value will be good
-      # if DO NOT match, skip to next sub
-      if sub.has_key?('registered_by') and sub['registered_by'] and @supports_registered_by
-        if sub['registered_by'] != system['registered_by']
+      # if desired_sub isn't specified on YAML, accept all type of system
+      if not desired_type.nil?
+        if system_type != desired_type
+          if @options[:debug]
+            puts "  DEBUG: Checking the type of system"
+          end
           if @options[:verbose]
-            puts "  VERBOSE: Skipping '#{system['name']}' as the system registered_by '#{system['registered_by']}' is different from desired '#{sub['registered_by']}'"
+            puts "  VERBOSE: Skipping '#{system['name']}' as system type '#{system_type}' is different from desired '#{desired_type}'"
           end
           next
+        else
+          # if not skip
+          if @options[:debug]
+            puts " DEBUG: System '#{system['name']}' has the correct system type '#{system_type}', desired '#{desired_type}'"
+          end
+        end
+      else
+        # if desired_type it's not set, do not check type of host
+        if @options[:debug]
+          puts " DEBUG: System '#{system['name']}' has the correct system type, as it's not setted in the YAML"
         end
       end
 
