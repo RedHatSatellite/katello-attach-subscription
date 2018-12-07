@@ -1,1 +1,2 @@
+require_relative 'katello_attach_subscription/utils'
 require_relative 'katello_attach_subscription/version'
