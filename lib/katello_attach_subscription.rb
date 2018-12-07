@@ -1,1 +1,2 @@
+require_relative 'katello_attach_subscription/host_matcher'
 require_relative 'katello_attach_subscription/version'
