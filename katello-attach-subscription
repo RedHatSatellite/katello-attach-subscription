@@ -1700,7 +1700,7 @@ end
 def getfreesubfor(parsed_subscription)
   free_subs = 0
   if parsed_subscription.empty?
-    puts "    Subscription check of quantity of search string '#{sub_name}' is empty, not counting any free subscription"
+    puts "    Subscription entry is empty, not counting any free subscription"
     return free_subs
   end
   # if empty, so zero results, this will be simply skipped
@@ -1729,7 +1729,7 @@ end
 def getconsumedsubfor(parsed_subscription)
   consumed_subs = 0
   if parsed_subscription.empty?
-    puts "    Subscription check of quantity of search string '#{sub_name}' is empty, not counting any consumed subscription"
+    puts "    Subscription entry is empty, not counting any free subscription"
     return consumed_subs
   end
   # if empty, so zero results, this will be simply skipped
@@ -1758,7 +1758,7 @@ end
 def getavailablesubfor(parsed_subscription)
   available_subs = 0
   if parsed_subscription.empty?
-    puts "    Subscription check of quantity of search string '#{sub_name}' is empty, not counting any available subscription"
+    puts "    Subscription entry is empty, not counting any free subscription"
     return available_subs
   end
   # if empty, so zero results, this will be simply skipped
