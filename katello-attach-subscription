@@ -26,6 +26,8 @@ require 'apipie-bindings'
 require 'json'
 require 'csv'
 
+require_relative 'lib/katello_attach_subscription'
+
 # force the output to be sent to stdout in a sync way
 $stdout.sync = true
 
@@ -271,12 +273,7 @@ def checksubs()
             # fetch all the result searching subscription by their name, stored in subscription_item
 
             # if subscription_item is an hash search for key = value, either search for the value
-            if subscription_item.is_a?(Hash)
-              sub_item_key = subscription_item.keys.first.to_s
-              search_options = "#{sub_item_key}=#{subscription_item[sub_item_key]}"
-            else
-              search_options = subscription_item
-            end
+            search_options = KatelloAttachSubscription::Utils.search_args(subscription_item)
 
             parsed_subscription = fetch_all_results(:subscriptions,:index,{:search => search_options, :available_for => "host"})
             # if the lookup has given no results at all, no subscriptions has to be added
@@ -750,28 +747,24 @@ def vdcupdate()
   else
     # no cache wanted
     puts "Starting host collection from API. Please be patient."
-    # preparing search_options to be add at parameters to api call
-    # if search options are present check string to become @options[:search] to 'and #{@options[:search]}'
-    # final search_options would become 'hypervisor=true' or 'hypervisor=true and @options[:search]'
-    @options[:search] = " and #{@options[:search]}" unless @options[:search].to_s.empty?
     # checking all of the systems 100 at the time, from page 0 to latest
     # first of all, search for hypervisor as we would like to subscribe in order hypervisors, physicals and guests
     # Currently there is a BZ opened as is not possible to absolute search hypervisor, physical and guest (BZ1635861)
-    search_options = "hypervisor=true#{@options[:search]}"
+    search_options = KatelloAttachSubscription::Utils.search_args(['hypervisor=true', @options[:search]])
     puts "Searching for Hypervisors"
     systems = fetch_all_results(:hosts, :index, {:search => search_options})
     hypervisor_count = systems.count
     puts "Completed hypervisor collection."
     puts "Hypervisors entry: #{hypervisor_count}"
     # research physical hosts filtering facts.virt::host_type="Not Applicable"
-    search_options = 'facts.virt::host_type="Not Applicable"'+@options[:search].to_s
+    search_options = KatelloAttachSubscription::Utils.search_args(['facts.virt::host_type="Not Applicable"', @options[:search]])
     puts "Searching for Physicals"
     systems.concat(fetch_all_results(:hosts, :index, {:search => search_options}))
     physical_count = systems.count
     puts "Completed physical collection."
     puts "Physical entry: #{physical_count - hypervisor_count}"
     # search guests one, filtering facts.virt::is_guest = true
-    search_options = "facts.virt::is_guest=true#{@options[:search]}"
+    search_options = KatelloAttachSubscription::Utils.search_args(['facts.virt::is_guest=true', @options[:search]])
     puts "Searching for Guests"
     systems.concat(fetch_all_results(:hosts, :index, {:search => search_options}))
     virt_count = systems.count
@@ -1542,7 +1535,7 @@ end
 # count the total number of subs available, consumed and free
 def getsubdetailfor(sub_name)
   detail_hash = {"consumed" => 0, "free" => 0}
-  search_options = 'name="'+sub_name+'"'
+  search_options = KatelloAttachSubscription::Utils.search_args(name: sub_name)
   parsed_subscription = fetch_all_results(:subscriptions,:index,{:search => search_options, :available_for => "host"})
   detail_hash["available"] = getavailablesubfor(parsed_subscription)
   detail_hash["consumed"] = getconsumedsubfor(parsed_subscription)
