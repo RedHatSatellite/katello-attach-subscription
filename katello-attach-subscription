@@ -836,7 +836,7 @@ def vdcupdate()
     end
     system_details[system['name']]=sys
     # check if the type requested match the host one
-    system_type = typefromsatellitedata(sys)
+    system_type = KatelloAttachSubscription::FactAnalyzer.system_type(sys, sys['facts'])
     # for each item in yaml extract sub
     if @options[:debug]
       puts " DEBUG: YAML dump with all definitions for the current system"
@@ -1377,30 +1377,6 @@ def printguestreport()
       csv << [guest_data['name'], guest_data['host'], guest_data['cluster']]
     end
   end
-end
-
-# get the type of the host data retrieved from satellite
-# if type is present use this
-def typefromsatellitedata(hostdata)
-  if hostdata.has_key?("type")
-    # saving the type of the server
-    system_type = hostdata["type"].to_s
-    if @options[:debug]
-      puts "DEBUG: host #{hostdata["name"]} has system_type equals to #{system_type}"
-    end
-  else
-    # if hostdata['type'] isn't present check if facts data is available
-    if hostdata.has_key?("facts") and hostdata["facts"].is_a?(Hash)
-      # if has facts check is present facts.virt that has null value if the server isn't an hypervisor
-      system_type = KatelloAttachSubscription::FactAnalyzer.system_type_from_facts(hostdata['facts'])
-    else
-      if @options[:debug]
-        puts "  DEBUG: Hosts #{hostdata["name"]} hasn't any facts data and type is missing. system_type assigned to Hypervisors."
-      end
-      system_type = "Hypervisor"
-    end
-  end
-  return system_type
 end
 
 # return true if an hypervisor has guest on it, checking from satellite data passed
