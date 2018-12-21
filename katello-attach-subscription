@@ -26,6 +26,8 @@ require 'apipie-bindings'
 require 'json'
 require 'csv'
 
+require_relative 'lib/katello_attach_subscription'
+
 # force the output to be sent to stdout in a sync way
 $stdout.sync = true
 
@@ -271,12 +273,7 @@ def checksubs()
             # fetch all the result searching subscription by their name, stored in subscription_item
 
             # if subscription_item is an hash search for key = value, either search for the value
-            if subscription_item.is_a?(Hash)
-              sub_item_key = subscription_item.keys.first.to_s
-              search_options = "#{sub_item_key}=#{subscription_item[sub_item_key]}"
-            else
-              search_options = subscription_item
-            end
+            search_options = KatelloAttachSubscription::Utils.search_args(subscription_item)
 
             parsed_subscription = fetch_all_results(:subscriptions,:index,{:search => search_options, :available_for => "host"})
             # if the lookup has given no results at all, no subscriptions has to be added
@@ -347,10 +344,10 @@ def checksubs()
         p json_hash
       end
       # check if the json_hash contains valid data by calling validhypervisordata functions
-      if validhypervisordata(json_hash)
+      if KatelloAttachSubscription::VirtWhoHelper.validhypervisordata(json_hash)
         # check the sanity of every hypervisor, searching if the data we need are present
         puts "Starting virt-who cache file parsing. Please be patient."
-        @parsed_hypervisors_hash = cleanhypervisorfromrawvirtwho(json_hash)
+        @parsed_hypervisors_hash = KatelloAttachSubscription::VirtWhoHelper.cleanhypervisorfromrawvirtwho(json_hash)
         # if parsed_hypervisors_hash isn't empty then virt-who --print should not run
         if not @parsed_hypervisors_hash.empty?
           run_virtwho_print = false
@@ -382,9 +379,9 @@ def checksubs()
         # start parsing virt-who --print output
         json_hash = JSON.parse(virtwho_print_output)
         # if raw data of json is valid then start checking retrieved data
-        if validhypervisordata(json_hash)
+        if KatelloAttachSubscription::VirtWhoHelper.validhypervisordata(json_hash)
           # clean raw json_hash from entry without socket and cluster data and store the new hash in @parsed_hypervisors_hash
-          @parsed_hypervisors_hash = cleanhypervisorfromrawvirtwho(json_hash)
+          @parsed_hypervisors_hash = KatelloAttachSubscription::VirtWhoHelper.cleanhypervisorfromrawvirtwho(json_hash)
           # if parsed_hypervisors_hash isn't empty, set virtwho_data to true so this data can use for rescue socket or cluster data in case satellite API fails to retrieve facts from Satellite
           if not @parsed_hypervisors_hash.empty?
             @virtwho_data = true
@@ -434,6 +431,12 @@ def checksubs()
       # retrieve full data for every hypervisor found
       begin
         sys = @api.resource(:hosts).call(:show, {:id => system['id'], :fields => 'full'})
+        if @options[:virtwho] and @virtwho_data
+          if @options[:verbose]
+            puts "VERBOSE: adding virt-who data to #{sys['name'}"
+          end
+          sys = KatelloAttachSubscription::VirtWhoHelper.merge_system_virtwho(sys, @parsed_hypervisors_hash, @options[:organization_id])
+        end
         hypervisors_collection.push(sys)
       rescue RestClient::NotFound
         STDERR.puts "   ERROR: Hypervisor '#{system['name']}' not found. Skipping."
@@ -473,37 +476,20 @@ def checksubs()
       if @options[:verbose]
         puts "    VERBOSE: Checking cluster of #{system['name']} #{currentcount+1}/#{hypervisors_collection.count}"
       end
-      hypercluster = {}
-      hypercluster = system
       # if field hypervisor::cluster is present and setted skip recovery phase
       if system.has_key?('facts') and system['facts'].is_a?(Hash) and system['facts'].has_key?('hypervisor::cluster') and system['facts']['hypervisor::cluster']
         if @options[:debug]
           puts "      DEBUG: Hypervisor cluster of #{system['name']} is #{system['facts']['hypervisor::cluster']}"
         end
       else
-        # if there is a problem with current hypervisor's cluster of satellite try to retrieve it from virt-who data, if present
-        if @options[:virtwho]
-          if @options[:verbose]
-            puts "      VERBOSE: No cluster data found. Start rescue cluster data from virt-who data"
-          end
-          # if virt-who data are present check
-          if @virtwho_data
-            cluster_name = gethypervisorclusterfromvirtwho(system['name'])
-          else
-            puts "FATAL ERROR: virt-who hasn't any valid cluster rescue data, check the sanity of your system"
-            exit 5
-          end
-        else
-          if @options[:verbose]
-            puts "      VERBOSE: No Hypervisor cluster data found in Satellite for #{system['name']}. Marking with 'nil' as default"
-          end
-          # saving cluster name as nil, as no virt-who data is used
-          cluster_name = 'nil'
+        if @options[:verbose]
+          puts "      VERBOSE: No Hypervisor cluster data found in Satellite for #{system['name']}. Marking with 'nil' as default"
         end
-        hypercluster.merge!({"facts"=>{'hypervisor::cluster'=>cluster_name}})
+        # saving cluster name as nil
+        system.merge!({"facts"=>{'hypervisor::cluster'=>'nil'}})
       end
       # save in the hypervisor data with cluster saved
-      @clustered_hypervisor_list.push(hypercluster)
+      @clustered_hypervisor_list.push(system)
     end
     if @options[:debug]
       puts "  DEBUG: Full clustered hypervisor data"
@@ -761,28 +747,24 @@ def vdcupdate()
   else
     # no cache wanted
     puts "Starting host collection from API. Please be patient."
-    # preparing search_options to be add at parameters to api call
-    # if search options are present check string to become @options[:search] to 'and #{@options[:search]}'
-    # final search_options would become 'hypervisor=true' or 'hypervisor=true and @options[:search]'
-    @options[:search] = " and #{@options[:search]}" unless @options[:search].to_s.empty?
     # checking all of the systems 100 at the time, from page 0 to latest
     # first of all, search for hypervisor as we would like to subscribe in order hypervisors, physicals and guests
     # Currently there is a BZ opened as is not possible to absolute search hypervisor, physical and guest (BZ1635861)
-    search_options = "hypervisor=true#{@options[:search]}"
+    search_options = KatelloAttachSubscription::Utils.search_args(['hypervisor=true', @options[:search]])
     puts "Searching for Hypervisors"
     systems = fetch_all_results(:hosts, :index, {:search => search_options})
     hypervisor_count = systems.count
     puts "Completed hypervisor collection."
     puts "Hypervisors entry: #{hypervisor_count}"
     # research physical hosts filtering facts.virt::host_type="Not Applicable"
-    search_options = 'facts.virt::host_type="Not Applicable"'+@options[:search].to_s
+    search_options = KatelloAttachSubscription::Utils.search_args(['facts.virt::host_type="Not Applicable"', @options[:search]])
     puts "Searching for Physicals"
     systems.concat(fetch_all_results(:hosts, :index, {:search => search_options}))
     physical_count = systems.count
     puts "Completed physical collection."
     puts "Physical entry: #{physical_count - hypervisor_count}"
     # search guests one, filtering facts.virt::is_guest = true
-    search_options = "facts.virt::is_guest=true#{@options[:search]}"
+    search_options = KatelloAttachSubscription::Utils.search_args(['facts.virt::is_guest=true', @options[:search]])
     puts "Searching for Guests"
     systems.concat(fetch_all_results(:hosts, :index, {:search => search_options}))
     virt_count = systems.count
@@ -837,6 +819,12 @@ def vdcupdate()
         puts "  VERBOSE: Skipping #{sys['name']} as it isn't registered with subscription manager"
       end
       next
+    end
+    if @options[:virtwho] and @virtwho_data
+      if @options[:verbose]
+        puts "VERBOSE: adding virt-who data to #{sys['name'}"
+      end
+      sys = KatelloAttachSubscription::VirtWhoHelper.merge_system_virtwho(sys, @parsed_hypervisors_hash, @options[:organization_id])
     end
     if @options[:debug]
       puts "  DEBUG: '#{system['name']}' id #{system['id']} :hosts api data:"
@@ -896,10 +884,9 @@ def vdcupdate()
         end
         sub_cluster = Regexp.new(sub['cluster'])
         if sys.has_key?('facts') and sys['facts'].has_key?('hypervisor::cluster')
-         this_system_cluster = sys['facts']['hypervisor::cluster']
+          this_system_cluster = sys['facts']['hypervisor::cluster']
         else
-          # get cluster name calling gethypervisorclusterfromvirtwho passing sys['name']
-          this_system_cluster = gethypervisorclusterfromvirtwho(sys['name'])
+          this_system_cluster = 'nil'
         end
 
         if @options[:debug]
@@ -1026,28 +1013,9 @@ def vdcupdate()
           exit 5
         end
       else
-        # system has not the socket available, check if virt-who is enabled
-        if @options[:virtwho]
-          # if available search for entry in the
-          if @options[:debug]
-            puts "   DEBUG: virt-who option enabled, starting rescue socket data for #{sys['name']}. Please be patient."
-          end
-          # if any virt-who valid entry is available search in the hash
-          if @virtwho_data
-            sys_socket = gethypervisorsocketfromvirtwho(sys['name'])
-          else
-            # if no virt-who valid entry us available then set default 1 to default
-            sys_socket = 1
-            if @options[:debug]
-              puts "   DEBUG: empty virt-who data, assigned 1 by default"
-            end
-          end
-        else
-          # if virt-who isn't enabled put 1 fixed as default
-          sys_socket = 1
-          if @options[:debug]
-            puts "   DEBUG: No cpu sockets entry found for #{sys['name']}, assigned 1 by default"
-          end
+        sys_socket = 1
+        if @options[:debug]
+          puts "   DEBUG: No cpu sockets entry found for #{sys['name']}, assigned 1 by default"
         end
       end
 
@@ -1376,127 +1344,6 @@ def vdcupdate()
   end
 end
 
-# return true if hypervisor data passed are valid, false if not
-def validhypervisordata(hypervisor_hash)
-  # first assume that the data aren't valid and set 'valid' value to false
-  valid = false
-  # if json_hash is an hash and the hashmap has a key named hypervisors and has > 0 entry in the hypervisors hashmap then return true
-  if hypervisor_hash.is_a?(Hash) and hypervisor_hash.has_key?("hypervisors") and hypervisor_hash["hypervisors"].count > 0
-    valid = true
-  end
-  return valid
-end
-
-# return the name of hypervisor from virt-who entry
-def getnamefromvirtwhohypervisordata(hypervisor_data)
-  # set the name of hypervisor from 'uuid' data as 'name' field should not be initialized
-  name = hypervisor_data['uuid']
-  # if 'name' field it's initialized save name from it
-  if hypervisor_data.has_key?('name')
-    name = hypervisor_data['name']
-  end
-  # downcase virt-who name to standarde data for the hash
-  name.downcase!
-  return name
-end
-
-# return the hash of cleanded virt-who data from the raw one
-def cleanhypervisorfromrawvirtwho(virtwho_hash)
-  cleaned_hash = {}
-  # loop every hypervisors entry
-  virtwho_hash["hypervisors"].each do |hash_hypervisor|
-    hypervisor_name = ""
-    if @options[:debug]
-      puts " DEBUG: Current Hypervisor fetched data:"
-      p hash_hypervisor
-    end
-    # if an entry has valid data push to parsed hypervisor hash
-    # check if hypervisor has key facts that contain a valid positive integer value relative the number of socket(s) or hash cluster key
-    if hash_hypervisor.is_a?(Hash) and hash_hypervisor.has_key?("facts") and hash_hypervisor["facts"].is_a?(Hash) and ((hash_hypervisor["facts"]["cpu.cpu_socket(s)"].to_i > 0) or (hash_hypervisor["facts"].has_key?("hypervisor.cluster") and hash_hypervisor["facts"]["hypervisor.cluster"]))
-      # retrieve hypervisor name and store it by calling getnamefromvirtwhohypervisordata function
-      hypervisor_name = getnamefromvirtwhohypervisordata(hash_hypervisor)
-      # add the single hypervisor hash (contained in hash_hypervisor) to cleaned_hash
-      cleaned_hash[hypervisor_name] = hash_hypervisor
-    else
-      # if data contained in hash_hypervisor isn't valid skip to the next
-      if @options[:debug]
-        puts "   DEBUG: Skipping Hypervisor #{hypervisor_name} because data is not valid"
-      end
-    end
-  end
-  return cleaned_hash
-end
-
-# return the cluster name retrieved from virt-who of the passed hypervisor name
-# return  'nil' string if hypervisor data not found in @parsed_hypervisors_hash
-# return 'none' string if hypervisor data found in @parsed_hypervisors_hash but cluster data isn't present
-def gethypervisorclusterfromvirtwho(system_name)
-  cleaned_system_name = cleansatellitename(system_name)
-  # downcase satellite name to standarde data for the hash
-  cleaned_system_name.downcase!
-  # retrieve the hypervisor data, using the cleaned name as key of the hash
-  rescue_hash = @parsed_hypervisors_hash[cleaned_system_name]
-  if rescue_hash.is_a?(Hash)
-    # if hypervisor.cluster facts is present store it to 'rescue_cluster'
-    if rescue_hash['facts'].has_key?('hypervisor.cluster')
-      rescue_cluster = rescue_hash['facts']['hypervisor.cluster']
-    else
-      # hypervisor data found but cluster data not present, marking as 'none'
-      if @options[:verbose]
-        puts "  VERBOSE: Virt-who data for #{system_name} present but no cluster data founded, setting 'none'"
-      end
-      rescue_cluster = 'none'
-    end
-  else
-    # hypervisor data not found, marking as 'nil'
-    if @options[:verbose]
-      puts "  VERBOSE: Virt-who data for #{system_name} not present, setting cluster to 'nil'"
-    end
-    rescue_cluster = 'nil'
-  end
-  if @options[:debug]
-    puts "  DEBUG: #{system_name} is in cluster #{rescue_cluster}"
-  end
-  return rescue_cluster
-end
-
-# return the socket data retrieved from virt-who of the passed hypervisor name
-# if the data founded isn't valid exit 5 from the script
-def gethypervisorsocketfromvirtwho(system_name)
-  cleaned_system_name = cleansatellitename(system_name)
-  # downcase satellite name to standarde data for the hash
-  cleaned_system_name.downcase!
-  # retrieve the hypervisor data, using the cleaned name as key of the hash
-  rescue_hash = @parsed_hypervisors_hash[cleaned_system_name]
-  # if socket data found retrieve value of cpu.cpu_socket(s) facts data
-  if rescue_hash.is_a?(Hash) and rescue_hash['facts'].has_key?('cpu.cpu_socket(s)')
-    # if it's valid (> 0) save it, else return error
-    if rescue_hash['facts']['cpu.cpu_socket(s)'].to_i > 0
-      rescue_socket = rescue_hash['facts']['cpu.cpu_socket(s)'].to_i
-    else
-      puts "FATAL ERROR: cpu.cpu_socket(s) value in virt-who data of #{system_name} is not > 0, check virt-who data"
-      # exit 5
-    end
-  else
-    # if no founded socket value in virt-who founded entry set default to 1
-    if @options[:verbose]
-      puts "  VERBOSE: No socket data present for #{system_name}, setting 1 as default"
-    end
-    rescue_socket = 1
-  end
-  if @options[:debug]
-    puts "  DEBUG: #{system_name} has #{rescue_socket} cpu socket(s)"
-  end
-  return rescue_socket
-end
-
-# remove the 'virt-who-' and '_org' string from Satellite name to match the virt-who one
-def cleansatellitename(satellite_name)
-  clean_name = satellite_name
-  clean_name.slice!(/^virt-who-/)
-  clean_name.slice!(/-#{@options[:org]}/)
-  return clean_name
-end
 
 # collect in @guest_list every guest with its host and cluster that would be print in a csv
 def collectguestdata(hypervisor_hash)
@@ -1688,7 +1535,7 @@ end
 # count the total number of subs available, consumed and free
 def getsubdetailfor(sub_name)
   detail_hash = {"consumed" => 0, "free" => 0}
-  search_options = 'name="'+sub_name+'"'
+  search_options = KatelloAttachSubscription::Utils.search_args(name: sub_name)
   parsed_subscription = fetch_all_results(:subscriptions,:index,{:search => search_options, :available_for => "host"})
   detail_hash["available"] = getavailablesubfor(parsed_subscription)
   detail_hash["consumed"] = getconsumedsubfor(parsed_subscription)
