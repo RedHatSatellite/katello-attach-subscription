@@ -1,1 +1,2 @@
 require_relative 'katello_attach_subscription/version'
+require_relative 'katello_attach_subscription/virt_who_helper'
