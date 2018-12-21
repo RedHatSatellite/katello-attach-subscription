@@ -1,0 +1,1 @@
+{"cpu":null,"hypervisor":null,"cpu::cpu_socket(s)":"2","hypervisor::version":"6.5.0","hypervisor::cluster":"fake_cluster","hypervisor::type":"VMware ESXi"}
