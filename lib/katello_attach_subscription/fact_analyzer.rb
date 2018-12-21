@@ -1,10 +1,10 @@
 module KatelloAttachSubscription
   class FactAnalyzer
 
-    GUEST = 'guest'.freeze
-    PHYSICAL = 'physical'.freeze
-    HYPERVISOR = 'hypervisor'.freeze
-    UNKNOWN = 'unknown'.freeze
+    GUEST = 'Guest'.freeze
+    PHYSICAL = 'Physical'.freeze
+    HYPERVISOR = 'Hypervisor'.freeze
+    UNKNOWN = 'Unknown'.freeze
 
     def self.system_type_from_facts(facts)
       if (not facts['virt::host_type'].nil? and facts['virt::host_type'] != 'Not Applicable') or
