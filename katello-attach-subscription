@@ -832,7 +832,7 @@ def vdcupdate()
     end
     system_details[system['name']]=sys
     # check if the type requested match the host one
-    system_type = typefromsatellitedata(sys)
+    system_type = KatelloAttachSubscription::FactAnalyzer.system_type(sys, sys['facts'])
     # for each item in yaml extract sub
     if @options[:debug]
       puts " DEBUG: YAML dump with all definitions for the current system"
@@ -853,7 +853,7 @@ def vdcupdate()
       end
 
       skip_sub = true
-      if @options[:density] and system_type == 'Hypervisor'
+      if @options[:density] and system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
         if not sub.has_key?('cluster')
           puts "FATAL ERROR: --check-density option enabled but no 'cluster' regex found in the yaml for this sub entry"
           p sub
@@ -909,7 +909,7 @@ def vdcupdate()
       end
 
       # if hosts is an hypervisor, check if it's empty or in a low density cluster to attach or not subscription
-      if system_type == 'Hypervisor'
+      if system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
         if @options[:density]
           if @empty_cluster.include? this_system_cluster
             # if empty remove and set skip_hypervisor to true
@@ -1361,61 +1361,6 @@ def printguestreport()
       csv << [guest_data['name'], guest_data['host'], guest_data['cluster']]
     end
   end
-end
-
-# get the type of the host data retrieved from satellite
-# if type is present use this
-def typefromsatellitedata(hostdata)
-  if hostdata.has_key?("type")
-    # saving the type of the server
-    system_type = hostdata["type"].to_s
-    if @options[:debug]
-      puts "DEBUG: host #{hostdata["name"]} has system_type equals to #{system_type}"
-    end
-  else
-    # if hostdata['type'] isn't present check if facts data is available
-    if hostdata.has_key?("facts") and hostdata["facts"].is_a?(Hash)
-      # if has facts check is present facts.virt that has null value if the server isn't an hypervisor
-      if hostdata["facts"].has_key?("virt")
-        # check the existance of host_type and is_guest field
-        if hostdata["facts"].has_key?("virt::host_type") or hostdata["facts"].has_key?("virt::is_guest") or hostdata["facts"].has_key?("virt::is_virtual")
-          # if is_guest == true then the server is a virtual host, assign guest to subscription type
-          if hostdata['facts']['virt::is_guest'] == "true"
-            system_type = "Guest"
-            if @options[:debug]
-              puts "   DEBUG: hostdatatem #{hostdata["name"]} has system_type assigned to Guest"
-            end
-          else
-            # if is_guest is false then check host_type to be equal to "Not Applicable"
-            if hostdata["facts"]["virt::host_type"] == "Not Applicable"
-              system_type = "Physical"
-              if @options[:debug]
-                puts "   DEBUG: hostdatatem #{hostdata["name"]} has system_type assigned to Physical"
-              end
-            else
-              puts "  FATAL ERROR: Host #{hostdata["name"]} isn't a guest but not a physical server. Check data"
-              exit 5
-            end
-          end
-        else
-          puts "  FATAL ERROR: Hosts #{hostdata["name"]} isn't an Hypervisor but host_type or is_guest fields are missing"
-          exit 5
-        end
-      else
-        # if the field is misisng then hostdata is an hypervisor
-        system_type = "Hypervisor"
-        if @options[:debug]
-          puts "   DEBUG: hostdatatem #{hostdata["name"]} has system_type assigned to Hypervisors"
-        end
-      end
-    else
-      if @options[:debug]
-        puts "  DEBUG: Hosts #{hostdata["name"]} hasn't any facts data and type is missing. system_type assigned to Hypervisors."
-      end
-      system_type = "Hypervisor"
-    end
-  end
-  return system_type
 end
 
 # return true if an hypervisor has guest on it, checking from satellite data passed
