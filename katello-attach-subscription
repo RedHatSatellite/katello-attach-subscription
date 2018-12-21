@@ -844,37 +844,14 @@ def vdcupdate()
       # if DO NOT match, skip to next sub
       # fixme: can't find this detail in new API
       if sub.has_key?('type')
-        desired_type = sub['type']
-      end
-      # extract current information from the system
-      # if desired_sub isn't specified on YAML, accept all type of system
-      if not desired_type.nil?
-        if system_type != desired_type
-          if @options[:debug]
-            puts "  DEBUG: Checking the type of system"
-          end
+        unless KatelloAttachSubscription::HostMatcher.match_type(sub['type'], system_type)
           if @options[:verbose]
-            puts "  VERBOSE: Skipping '#{system['name']}' as system type '#{system_type}' is different from desired '#{desired_type}'"
+            puts "  VERBOSE: Skipping '#{system['name']}' as system type '#{system_type}' is different from desired '#{sub['type']}'"
           end
           next
-        else
-          # if not skip
-          if @options[:debug]
-            puts " DEBUG: System '#{system['name']}' has the correct system type '#{system_type}', desired '#{desired_type}'"
-          end
-        end
-      else
-        # if desired_type it's not set, do not check type of host
-        if @options[:debug]
-          puts " DEBUG: System '#{system['name']}' has the correct system type, as it's not setted in the YAML"
         end
       end
 
-      # extract the name of the host to be registered
-      hostnameregex = Regexp.new(sub['hostname'])
-      if @options[:debug]
-        puts "  DEBUG: Current pattern in sub: '#{sub['hostname'].inspect}', the extracted pattern is '#{hostnameregex.inspect}'"
-      end
       skip_sub = true
       if @options[:density] and system_type == 'Hypervisor'
         if not sub.has_key?('cluster')
@@ -882,7 +859,6 @@ def vdcupdate()
           p sub
           exit 5
         end
-        sub_cluster = Regexp.new(sub['cluster'])
         if sys.has_key?('facts') and sys['facts'].has_key?('hypervisor::cluster')
           this_system_cluster = sys['facts']['hypervisor::cluster']
         else
@@ -894,7 +870,7 @@ def vdcupdate()
           puts "   DEBUG: sub cluster regex: #{sub['cluster']}"
         end
         # if match passare
-        if sub_cluster.match(this_system_cluster)
+        if KatelloAttachSubscription::HostMatcher.match_regexp(sub['cluster'], this_system_cluster)
           if @options[:verbose]
             puts " VERBOSE: System cluster #{this_system_cluster} match sub cluster regex #{sub['cluster']}"
           end
@@ -905,10 +881,9 @@ def vdcupdate()
           end
         end
       else
-        # check if the current system match the desired one, if not skip_sub
-        if hostnameregex.match(system['name'])
+        if KatelloAttachSubscription::HostMatcher.match_hostname(sub['hostname'], system['name'])
           if @options[:debug]
-            puts " DEBUG: System '#{system['name']}' match the regexp"
+            puts " DEBUG: System '#{system['name']}' match the regexp '#{sub['hostname']}'"
           end
           skip_sub = false
         end
