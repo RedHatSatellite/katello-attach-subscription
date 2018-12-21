@@ -858,7 +858,7 @@ def vdcupdate()
 
       this_system_cluster = 'nil'
       skip_sub = true
-      if @options[:density] and system_type == 'Hypervisor'
+      if @options[:density] and system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
         # retrieve cluster name of the hypervisor
         if sys.has_key?('facts') and sys['facts'].has_key?('hypervisor::cluster')
          this_system_cluster = sys['facts']['hypervisor::cluster']
@@ -913,7 +913,7 @@ def vdcupdate()
       end
 
       # if hosts is an hypervisor, check if it's empty or in a low density cluster to attach or not subscription
-      if system_type == 'Hypervisor'
+      if system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
         skip_density = false
         if sub.has_key?('skip_density')
           skip_density = sub['skip_density']
