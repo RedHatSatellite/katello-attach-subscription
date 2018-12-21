@@ -1,4 +1,5 @@
-subs:
+---
+:subs:
 -
   type: Hypervisor
   facts:
