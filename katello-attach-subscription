@@ -433,9 +433,9 @@ def checksubs()
         sys = @api.resource(:hosts).call(:show, {:id => system['id'], :fields => 'full'})
         if @options[:virtwho] and @virtwho_data
           if @options[:verbose]
-            puts "VERBOSE: adding virt-who data to #{sys['name'}"
+            puts "VERBOSE: adding virt-who data to #{sys['name']}"
           end
-          sys = KatelloAttachSubscription::VirtWhoHelper.merge_system_virtwho(sys, @parsed_hypervisors_hash, @options[:organization_id])
+          sys = KatelloAttachSubscription::VirtWhoHelper.merge_system_virtwho(sys, @parsed_hypervisors_hash, @options[:org])
         end
         hypervisors_collection.push(sys)
       rescue RestClient::NotFound
@@ -822,9 +822,9 @@ def vdcupdate()
     end
     if @options[:virtwho] and @virtwho_data
       if @options[:verbose]
-        puts "VERBOSE: adding virt-who data to #{sys['name'}"
+        puts "VERBOSE: adding virt-who data to #{sys['name']}"
       end
-      sys = KatelloAttachSubscription::VirtWhoHelper.merge_system_virtwho(sys, @parsed_hypervisors_hash, @options[:organization_id])
+      sys = KatelloAttachSubscription::VirtWhoHelper.merge_system_virtwho(sys, @parsed_hypervisors_hash, @options[:org])
     end
     if @options[:debug]
       puts "  DEBUG: '#{system['name']}' id #{system['id']} :hosts api data:"
