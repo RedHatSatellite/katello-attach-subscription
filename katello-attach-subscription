@@ -865,7 +865,6 @@ def vdcupdate()
       end
 
       this_system_cluster = 'nil'
-      skip_sub = true
       if @options[:density] and system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
         # retrieve cluster name of the hypervisor
         if sys.has_key?('facts') and sys['facts'].has_key?('hypervisor::cluster')
@@ -879,26 +878,10 @@ def vdcupdate()
           sys['facts']['hypervisor::cluster'] = this_system_cluster
         end
       end
-      if KatelloAttachSubscription::HostMatcher.match_hostname(sub['hostname'], system['name'])
-        if @options[:debug]
-          puts " DEBUG: System '#{system['name']}' match the regexp '#{sub['hostname']}'"
-        end
-        skip_sub = false
-      end
 
-      # skip the sub if setted
-      if skip_sub
-        if @options[:verbose]
-          puts "  VERBOSE: skipping '#{system['name']}' as system cluster type doesn't match sub type or system name do not match following regexp:"
-          puts "           '#{sub['hostname']}'"
-        end
-        next
-      else
-        if @options[:debug]
-          # puts " DEBUG: System '#{system['name']}' match the regexp"
-          puts " DEBUG: System '#{system['name']}' can be subbed"
-        end
-      end
+      # check if sub shall be skipped based on hostname, type and facts
+      next if KatelloAttachSubscription::HostMatcher.skip_sub?(sys, sub, @options)
+
       # extract the (possible) virtual_host
       if sub.has_key?('virtual_host')
         virtualhostregex = Regexp.new(sub['virtual_host'])

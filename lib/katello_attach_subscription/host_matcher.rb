@@ -53,5 +53,9 @@ module KatelloAttachSubscription
       version = Gem::Version.new(actual)
       requirement.satisfied_by?(version)
     end
+
+    def self.skip_sub?(host, sub, options = {})
+      !self.match_host(host, sub)
+    end
   end
 end
