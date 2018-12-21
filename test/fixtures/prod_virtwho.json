@@ -1,0 +1,1297 @@
+{
+  "hypervisors": [
+    {
+      "uuid": "hypervisor3.goodcluster.example.org",
+      "guests": [
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        }
+      ],
+      "facts": {
+        "hypervisor.type": "VMware ESXi",
+        "cpu.cpu_socket(s)": "4",
+        "hypervisor.cluster": "Good_PREPROD_Cluster",
+        "hypervisor.version": "6.0.0"
+      },
+      "name": "hypervisor3.goodcluster.example.org"
+    },
+    {
+      "uuid": "hypervisor4.goodcluster.example.org",
+      "guests": [
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        }
+      ],
+      "facts": {
+        "hypervisor.type": "VMware ESXi",
+        "cpu.cpu_socket(s)": "4",
+        "hypervisor.cluster": "Good_PREPROD_Cluster",
+        "hypervisor.version": "6.0.0"
+      },
+      "name": "hypervisor4.goodcluster.example.org"
+    },
+    {
+      "uuid": "hypervisor5.goodcluster.example.org",
+      "guests": [
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 1,
+          "attributes": {
+            "active": 1,
+            "virtWhoType": "esx"
+          }
+        }
+      ],
+      "facts": {
+        "hypervisor.type": "VMware ESXi",
+        "cpu.cpu_socket(s)": "4",
+        "hypervisor.cluster": "Good_PREPROD_Cluster",
+        "hypervisor.version": "6.0.0"
+      },
+      "name": "hypervisor5.goodcluster.example.org"
+    },
+    {
+      "uuid": "hypervisor1.nonecluster.example.org",
+      "guests": [],
+      "facts": {
+        "hypervisor.type": "VMware ESXi",
+        "cpu.cpu_socket(s)": "2",
+        "hypervisor.version": "6.5.0"
+      },
+      "name": "hypervisor1.nonecluster.example.org"
+    },
+    {
+      "uuid": "hypervisor7.errorcluster.example.org",
+      "guests": [
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        },
+        {
+          "guestId": "guestUUID",
+          "state": 5,
+          "attributes": {
+            "active": 0,
+            "virtWhoType": "esx"
+          }
+        }
+      ],
+      "facts": {
+        "hypervisor.type": "VMware ESXi",
+        "cpu.cpu_socket(s)": "4",
+        "hypervisor.cluster": "Error_PROD_Cluster",
+        "hypervisor.version": "6.0.0"
+      },
+      "name": "hypervisor7.errorcluster.example.org"
+    },
+    {
+      "uuid": "hypervisor6.errorcluster.example.org",
+      "guests": [],
+      "facts": {
+        "hypervisor.type": "VMware ESXi",
+        "cpu.cpu_socket(s)": "4",
+        "hypervisor.cluster": "Error_PROD_Cluster",
+        "hypervisor.version": "6.0.0"
+      },
+      "name": "hypervisor6.errorcluster.example.org"
+    },
+  ]
+}

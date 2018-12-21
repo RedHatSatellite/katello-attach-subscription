@@ -1,0 +1,105 @@
+subs:
+-
+  type: Hypervisor
+  facts:
+  - name: hypervisor::cluster
+    value: _PROD_
+    matcher: regex
+  sub:
+    rhel:
+    - Red Hat Enterprise Linux for Virtual Datacenters, Premium
+    els:
+    - Red Hat Enterprise Linux Extended Life Cycle Support (Unlimited Guests)
+    smartmanagement:
+    - Smart Management for Unlimited Guests
+-
+  type: Hypervisor
+  facts:
+  - name: hypervisor::cluster
+    value: _PREPROD_
+    matcher: regex
+  sub:
+    rhel:
+    - Red Hat Enterprise Linux for Virtual Datacenters, Standard
+    els:
+    - Red Hat Enterprise Linux Extended Life Cycle Support (Unlimited Guests)
+    smartmanagement:
+    - Smart Management for Unlimited Guests
+-
+  type: Hypervisor
+  facts:
+  - name: hypervisor::cluster
+    value: ^((?!_PROD_|_PREPROD_).)*$
+    matcher: regex
+  sub:
+    rhel:
+    - Red Hat Enterprise Linux for Virtual Datacenters, Standard
+    - Red Hat Enterprise Linux for Virtual Datacenters, Premium
+    els:
+    - Red Hat Enterprise Linux Extended Life Cycle Support (Unlimited Guests)
+    smartmanagement:
+    - Smart Management for Unlimited Guests
+-
+  type: Physical
+  facts:
+  - name: distribution::name
+    value: Server
+    matcher: regex
+  - name: distribution::version
+    value: <6.0
+    matcher: vercmp
+  sub:
+    rhel:
+    - Red Hat Enterprise Linux Server, Standard (Physical or Virtual Nodes)
+    - Red Hat Enterprise Linux Server, Premium (Physical or Virtual Nodes)
+    els:
+    - Red Hat Enterprise Linux Extended Life Cycle Support (Physical or Virtual Nodes)
+    smartmanagement:
+    - Smart Management
+-
+  type: Physical
+  facts:
+  - name: distribution::name
+    value: Server
+    matcher: regex
+  - name: distribution::version
+    value: '>=6.0'
+    matcher: vercmp
+  sub:
+    rhel:
+    - Red Hat Enterprise Linux Server, Standard (Physical or Virtual Nodes)
+    - Red Hat Enterprise Linux Server, Premium (Physical or Virtual Nodes)
+    smartmanagement:
+    - Smart Management
+-
+  type: Physical
+  facts:
+  - name: distribution::name
+    value: Client
+    matcher: regex
+  - name: distribution::version
+    value: <6.0
+    matcher: vercmp
+  sub:
+    rhel:
+    - Red Hat Enterprise Linux Server, Standard (Physical or Virtual Nodes)
+    - Red Hat Enterprise Linux Server, Premium (Physical or Virtual Nodes)
+    els:
+    - Red Hat Enterprise Linux Extended Life Cycle Support (Physical or Virtual Nodes)
+    smartmanagement:
+    - Smart Management
+-
+  type: Physical
+  facts:
+  - name: distribution::name
+    value: Client
+    matcher: regex
+  - name: distribution::version
+    value: '>=6.0'
+    matcher: vercmp
+  sub:
+    rhel:
+    - Red Hat Enterprise Linux Server, Standard (Physical or Virtual Nodes)
+    - Red Hat Enterprise Linux Server, Premium (Physical or Virtual Nodes)
+    smartmanagement:
+    - Smart Management
