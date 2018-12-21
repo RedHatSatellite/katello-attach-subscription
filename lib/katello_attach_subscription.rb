@@ -1,2 +1,5 @@
+require_relative 'katello_attach_subscription/fact_analyzer'
 require_relative 'katello_attach_subscription/host_matcher'
+require_relative 'katello_attach_subscription/utils'
 require_relative 'katello_attach_subscription/version'
+require_relative 'katello_attach_subscription/virt_who_helper'
