@@ -846,8 +846,6 @@ def vdcupdate()
       if sub.has_key?('type')
         desired_type = sub['type']
       end
-      # set to false the result of all tests of this sub entry
-      fact_test_passed = false
       # extract current information from the system
       # if desired_sub isn't specified on YAML, accept all type of system
       if not desired_type.nil?
@@ -879,24 +877,41 @@ def vdcupdate()
       end
       skip_sub = true
       if @options[:density] and system_type == 'Hypervisor'
-        # retrieve cluster name of the hypervisor
+        if not sub.has_key?('cluster')
+          puts "FATAL ERROR: --check-density option enabled but no 'cluster' regex found in the yaml for this sub entry"
+          p sub
+          exit 5
+        end
+        sub_cluster = Regexp.new(sub['cluster'])
         if sys.has_key?('facts') and sys['facts'].has_key?('hypervisor::cluster')
           this_system_cluster = sys['facts']['hypervisor::cluster']
         else
           this_system_cluster = 'nil'
         end
+
         if @options[:debug]
           puts "   DEBUG: system cluster: #{this_system_cluster}"
+          puts "   DEBUG: sub cluster regex: #{sub['cluster']}"
         end
-        # add the cluster to hypervisor entry with merge
-        sys.merge!({"facts"=>{'hypervisor::cluster'=>this_system_cluster}})
-      end
-      # check if the current system match the desired one, if not skip_sub
-      if hostnameregex.match(system['name'])
-        if @options[:debug]
-          puts " DEBUG: System '#{system['name']}' match the regexp"
+        # if match passare
+        if sub_cluster.match(this_system_cluster)
+          if @options[:verbose]
+            puts " VERBOSE: System cluster #{this_system_cluster} match sub cluster regex #{sub['cluster']}"
+          end
+          skip_sub = false
+        else
+          if @options[:verbose]
+            puts " VERBOSE: Skipping as cluster #{this_system_cluster} doesn't match sub cluster type #{sub['cluster']}"
+          end
         end
-        skip_sub = false
+      else
+        # check if the current system match the desired one, if not skip_sub
+        if hostnameregex.match(system['name'])
+          if @options[:debug]
+            puts " DEBUG: System '#{system['name']}' match the regexp"
+          end
+          skip_sub = false
+        end
       end
       # skip the sub if setted
       if skip_sub
@@ -916,22 +931,6 @@ def vdcupdate()
         virtualhostregex = Regexp.new(sub['virtual_host'])
       else
         virtualhostregex = nil
-      end
-
-      # test all the facts
-      if @options[:verbose]
-        puts "VERBOSE: Start testing facts value for #{sys['name']}"
-      end
-      if @options[:debug]
-        puts "  DEBUG: Facts data of #{sys['name']}"
-        p sys['facts']
-      end
-      fact_test_passed = compareAllFacts(sub, sys)
-      if not fact_test_passed
-        if @options[:verbose]
-          puts "  VERBOSE: Host #{sys['name']} doesn't pass facts test. Skip to the next sub entry."
-        end
-        next
       end
 
       # if hosts is an hypervisor, check if it's empty or in a low density cluster to attach or not subscription
@@ -1629,180 +1628,6 @@ def getavailablesubfor(parsed_subscription)
     available_subs += subscription['quantity']
   end
   return available_subs
-end
-
-
-# fact matcher functions
-
-# loop all the facts that checks all value of facts
-def compareAllFacts(sub_yaml_entry, satellite_data)
-  # if no facts to check are present return true as no checks have to be passed
-  if not sub_yaml_entry.has_key?('facts')
-    if @options[:verbose]
-      puts "  VERBOSE: Test passed as no entry available for facts test."
-    end
-    return true
-  end
-  # pass_all set to true by default, if one test would not pass, break and set to false
-  pass_all = true
-  sub_yaml_entry['facts'].each do |fact_entry|
-    # if facts entry hasn't name nor value
-    if not fact_entry.is_a?(Hash) or not fact_entry.has_key?('name') or not fact_entry.has_key?('value')
-      puts "FATAL ERROR: Facts value not setted correctly for this subscriptions entry"
-      p sub_yaml_entry
-      exit 5
-    end
-    # if in satellite data the facts isn't present, stop loop and return false
-    if not satellite_data['facts'].has_key?(fact_entry['name'])
-      if @options[:verbose]
-        puts "    VERBOSE: Facts #{fact_entry['name']} isn't present in host #{satellite_data['name']}. Facts test failed."
-      end
-      pass_all = false
-      break
-    end
-    matcher = fact_entry['matcher'] unless not fact_entry.has_key?('matcher')
-    passed = compareFacts(fact_entry['name'], fact_entry['value'], matcher, satellite_data)
-    if not passed
-      # if not passed set pass_all to false and break loop as loop has to passes all
-      if @options[:verbose]
-        puts "    VERBOSE: Test of #{fact_entry['name']} return false. Facts test failed."
-      end
-      pass_all = false
-      break
-    end
-  end
-  return pass_all
-end
-
-# compare satellite data facts with the one inserted on facts from yaml
-# matcher list+
-# - no value: strictly ==
-# -   vercmp: compare version of the 2 value 6.3 > 6.2 but 6.3 < 6.20, even if 6.2 == 6.20
-# -    regex: check if the facts of sat match the regex of the yaml
-def compareFacts(fact_name, fact_value, facts_matcher, satellite_data)
-  # set false as default
-  test_passed = false
-  if @options[:verbose]
-    puts "      VERBOSE: Testing #{fact_name} facts for #{satellite_data['name']}"
-  end
-  facts_matcher = "equals" unless not facts_matcher.to_s.empty?
-  if @options[:verbose]
-    puts "        VERBOSE: Testing #{facts_matcher} value for #{fact_name}"
-  end
-  satellite_value = satellite_data['facts'][fact_name].to_s
-  case facts_matcher
-  when "equals"
-    test_passed = strictEqualsCompare(fact_value, satellite_value)
-  when "vercmp"
-    test_passed = versionCompare(fact_value, satellite_value)
-  when "regex"
-    test_passed = regexCompare(fact_value, satellite_value)
-  else
-    # invalid matcher in yaml entry, set false
-    if @options[:verbose]
-      puts "        VERBOSE: Facts matcher #{facts_matcher} isn't valid, as the only available are: '', 'vercmp' and 'regex'. Test failed"
-    end
-    test_passed = false
-  end
-  return test_passed
-end
-
-# return true if fact_value is equal to satellite_value
-def strictEqualsCompare(fact_value, satellite_value)
-  # clean name to standardize the value
-  fact_value.to_s.tr!("'","")
-  fact_value.to_s.tr!('"','')
-  satellite_value.to_s.tr!("'","")
-  satellite_value.to_s.tr!('"','')
-  # test the value as now they are string so '6.3' == '6.30' would return false
-  if @options[:debug]
-    puts "          DEBUG: Is yaml_value '#{fact_value}' == sat_value '#{satellite_value}' ?"
-  end
-  if fact_value == satellite_value
-    if @options[:verbose]
-      puts "          VERBOSE: Test passed."
-    end
-    return true
-  end
-  if @options[:verbose]
-    puts "          VERBOSE: Test failed."
-  end
-  return false
-end
-
-# compare different version from yaml expression for operation
-# note: set as "<'6.3'" or '>="6.30.1"' with tick on number of version
-def versionCompare(fact_value, satellite_value)
-  original_fact = fact_value
-  # get current string qualifier of yaml and satellite facts value
-  f_strqual = ""
-  f_strqual = "'" unless not fact_value.include?("'")
-  f_strqual = '"' unless not fact_value.include?('"')
-  s_strqual = ""
-  s_strqual = "'" unless not satellite_value.include?("'")
-  s_strqual = '"' unless not satellite_value.include?('"')
-
-  # clean blankspace in yaml fact version value
-  fact_value.tr!(" ","")
-
-  # if facts has not string qualifier try to standardize it
-  if f_strqual.empty?
-    if @options[:verbose]
-      puts "          VERBOSE: fact_value seems to not have string qualifier try to standardizing it"
-    end
-    # get version by removing value like [,],= with gsub
-    version = fact_value.gsub(/[<>=]/, "")
-    # get operator by removing value that aren't [,],= with gsub
-    operator = fact_value.gsub(/(?![<>=])./, "")
-    # assume ' as default string qualifier for yaml fact separator
-    f_strqual = "'"
-    # create the string that has this pattern >'6.2'
-    fact_value = "#{operator}#{f_strqual}#{version}#{f_strqual}"
-  end
-  # if satellite string qualifier is empty standardize with yaml facts one
-  satellite_value = "#{f_strqual}#{satellite_value}#{f_strqual}" if s_strqual.empty?
-  # build the comparing string by adding fact_value to satellite_value so it would become, eg, '5.1' < '6.2'
-  cmp_string = satellite_value + fact_value
-  if @options[:verbose]
-    puts "          DEBUG: compare string that would be evalueted: #{cmp_string}"
-  end
-  # make the eval of the cmp_string
-  begin
-    result = eval(cmp_string)
-  # if some error of format string or data happen return error and fail the test
-  rescue Exception => e
-    puts "ERROR on EVAL parsing, test failed. Maybe bad string in YAML? Check #{original_fact} entry"
-    result = false
-  end
-  if @options[:verbose]
-    if result
-      puts "          VERBOSE: Test passed."
-    else
-      puts "          VERBOSE: Test failed."
-    end
-  end
-  return result
-end
-
-# check if /fact_value/ match satellite_value
-def regexCompare(fact_value, satellite_value)
-  # build the regex from fact_value
-  fact_regex = Regexp.new(fact_value)
-  if @options[:debug]
-    puts "          DEBUG: Does yaml_value '#{fact_value}' regex match sat_value '#{satellite_value}' ?"
-  end
-  # if the regex match the satellite vale of the facts return true
-  if fact_regex.match(satellite_value)
-    if @options[:verbose]
-      puts "          VERBOSE: Test passed."
-    end
-    return true
-  end
-  # else return false
-  if @options[:verbose]
-    puts "          VERBOSE: Test failed."
-  end
-  return false
 end
 
 # call api function to retrieve the list of object passed in resource
