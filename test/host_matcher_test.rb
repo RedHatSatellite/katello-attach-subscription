@@ -3,9 +3,9 @@ require 'test_helper'
 class HostMatcherTest < Minitest::Test
   DUMMY_CONFIG = {
       'hostname' => '.*\.example\.com',
-      'match' => [
-          {'fact' => 'os::release::full', 'matcher' => 'version', 'value' => '>= 7.4'},
-          {'fact' => 'cpu::cpu_socket(s)', 'value' => '12'}
+      'facts' => [
+          {'name' => 'os::release::full', 'matcher' => 'version', 'value' => '>= 7.4'},
+          {'name' => 'cpu::cpu_socket(s)', 'value' => '12'}
       ]
   }
 
