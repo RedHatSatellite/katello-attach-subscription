@@ -34,7 +34,8 @@ module KatelloAttachSubscription
       end
     end
 
-    def self.system_type(host, facts)
+    def self.system_type(host, facts = nil)
+      facts = host['facts'] unless facts
       self.system_type_from_host(host) || self.system_type_from_facts(facts) || UNKNOWN
     end
   end

@@ -791,7 +791,6 @@ def vdcupdate()
     desired_quantity = 1
     sys_socket = 1
     hypervisor_found = false
-    system_type = ""
     this_system_cluster = ""
     skip_hypervisor = false
     sys = nil
@@ -832,7 +831,7 @@ def vdcupdate()
     end
     system_details[system['name']]=sys
     # check if the type requested match the host one
-    system_type = KatelloAttachSubscription::FactAnalyzer.system_type(sys, sys['facts'])
+    system_type = KatelloAttachSubscription::FactAnalyzer.system_type(sys)
     # for each item in yaml extract sub
     if @options[:debug]
       puts " DEBUG: YAML dump with all definitions for the current system"
