@@ -442,9 +442,9 @@ def checksubs()
           sys = KatelloAttachSubscription::VirtWhoHelper.merge_system_virtwho(sys, @parsed_hypervisors_hash, @options[:org])
         end
         hypervisors_collection.push(sys)
-      #rescue RestClient::NotFound
-      #  STDERR.puts "   ERROR: Hypervisor '#{system['name']}' not found. Skipping."
-      #  next
+      rescue RestClient::NotFound
+        STDERR.puts "   ERROR: Hypervisor '#{system['name']}' not found. Skipping."
+        next
       rescue Exception => e
         puts "   ERROR: Unknow Error -- Unable to retrieve details for hypervisor #{system['id']} #{system['name']}"
         puts e.message
@@ -900,7 +900,7 @@ def vdcupdate()
       if @options[:verbose]
         puts "VERBOSE: Start testing facts value for #{sys['name']}"
       end
-      fact_test_passed = compareAllFacts(sub, sys)
+      fact_test_passed = KatelloAttachSubscription::HostMatcher.match_host(sys, sub)
       if not fact_test_passed
         if @options[:verbose]
           puts "  VERBOSE: Host #{sys['name']} doesn't pass facts test. Skip to the next sub entry."
@@ -1573,68 +1573,6 @@ def getavailablesubfor(parsed_subscription)
     available_subs += subscription['quantity']
   end
   return available_subs
-end
-
-
-# fact matcher functions
-
-# loop all the facts that checks all value of facts
-def compareAllFacts(sub_yaml_entry, satellite_data)
-  # if no facts to check are present return true as no checks have to be passed
-  if not sub_yaml_entry.has_key?('facts')
-    if @options[:verbose]
-      puts "  VERBOSE: Test passed as no entry available for facts test."
-    end
-    return true
-  end
-  # pass_all set to true by default, if one test would not pass, break and set to false
-  pass_all = true
-  sub_yaml_entry['facts'].each do |fact_entry|
-    # if facts entry hasn't name nor value
-    if not fact_entry.is_a?(Hash) or not fact_entry.has_key?('name') or not fact_entry.has_key?('value')
-      puts "FATAL ERROR: Facts value not setted correctly for this subscriptions entry"
-      p fact_entry
-      puts "HASH? #{fact_entry.is_a?(Hash)}"
-      puts "HAS NAME? #{fact_entry.has_key?('name')}"
-      puts "HAS VALUE?#{fact_entry.has_key?('value')}"
-      exit 5
-    end
-    # if in satellite data the facts isn't present, stop loop and return false
-    if not satellite_data['facts'].has_key?(fact_entry['name'])
-      if @options[:verbose]
-        puts "    VERBOSE: Facts #{fact_entry['name']} isn't present in host #{satellite_data['name']}. Facts test failed."
-      end
-      pass_all = false
-      break
-    end
-    matcher = fact_entry['matcher'] unless not fact_entry.has_key?('matcher')
-    passed = compareFacts(fact_entry['name'], fact_entry['value'], matcher, satellite_data)
-    if not passed
-      # if not passed set pass_all to false and break loop as loop has to passes all
-      if @options[:verbose]
-        puts "    VERBOSE: Test of #{fact_entry['name']} return false. Facts test failed."
-      end
-      pass_all = false
-      break
-    end
-  end
-  return pass_all
-end
-
-# compare satellite data facts with the one inserted on facts from yaml
-# matcher list+
-# - no value: strictly ==
-# -  version: compare version of the 2 value 6.3 > 6.2 but 6.3 < 6.20, even if 6.2 == 6.20
-# -    regex: check if the facts of sat match the regex of the yaml
-def compareFacts(fact_name, fact_value, facts_matcher, satellite_data)
-  # set false as default
-  test_passed = false
-  if @options[:verbose]
-    puts "      VERBOSE: Testing #{fact_name} facts for #{satellite_data['name']}"
-  end
-  satellite_value = satellite_data['facts'][fact_name].to_s
-  test_passed = KatelloAttachSubscription::HostMatcher.match_matcher(fact_value, satellite_value, facts_matcher)
-  return test_passed
 end
 
 # call api function to retrieve the list of object passed in resource
