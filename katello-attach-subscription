@@ -836,7 +836,11 @@ def vdcupdate()
     end
     system_details[system['name']]=sys
     # check if the type requested match the host one
-    system_type = KatelloAttachSubscription::FactAnalyzer.system_type(sys, sys['facts'])
+    if sys.has_key?('facts')
+      system_type = KatelloAttachSubscription::FactAnalyzer.system_type(sys, sys['facts'])
+    else
+      system_type = KatelloAttachSubscription::FactAnalyzer.system_type_from_host(sys)
+    end
     # for each item in yaml extract sub
     if @options[:debug]
       puts " DEBUG: YAML dump with all definitions for the current system"
@@ -855,7 +859,6 @@ def vdcupdate()
           next
         end
       end
-
       this_system_cluster = 'nil'
       skip_sub = true
       if @options[:density] and system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
@@ -900,7 +903,14 @@ def vdcupdate()
       if @options[:verbose]
         puts "VERBOSE: Start testing facts value for #{sys['name']}"
       end
-      fact_test_passed = KatelloAttachSubscription::HostMatcher.match_host(sys, sub)
+      if sub.has_key?('facts')
+        fact_test_passed = KatelloAttachSubscription::HostMatcher.match_host(sys, sub)
+      else
+        if @options[:verbose]
+          puts "  VERBOSE: Fact test passed as no test on it"
+        end
+        fact_test_passed = true
+      end
       if not fact_test_passed
         if @options[:verbose]
           puts "  VERBOSE: Host #{sys['name']} doesn't pass facts test. Skip to the next sub entry."
@@ -1012,9 +1022,12 @@ def vdcupdate()
         puts " DEBUG: System '#{system['name']}' in scope, proceeding with assignment of variables"
       end
       # set the desidered subscription to be associated
-      sub_layering = "stop_parsing" || sub['sub_layering']
+      sub_layer = sub['sub_layer'] || "stop_parsing"
+      if @options[:debug]
+        puts " DEBUG: Sub Layer of this sub entry: #{sub_layer}"
+      end
       if sub.has_key?('sub_parsed')
-        desired_sub_hash = KatelloAttachSubscription::Utils.merge_subs(desired_sub_hash, sub['sub_parsed'], sub_layering)
+        desired_sub_hash = KatelloAttachSubscription::Utils.merge_subs(desired_sub_hash, sub['sub_parsed'], sub_layer)
         #desired_sub_hash = sub['sub_parsed']
       end
       # if "remove_other" has been set, set the flag
@@ -1039,7 +1052,7 @@ def vdcupdate()
       end
 
       # if the system is found, stop cyclyng over yaml,
-      if sub_layering == "stop_parsing"
+      if sub_layer == "stop_parsing"
         break
       end
 
