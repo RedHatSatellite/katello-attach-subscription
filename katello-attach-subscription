@@ -983,7 +983,7 @@ def vdcupdate()
           skip_hypervisor ||= !hypervisor_has_guests(sys)
         end
       end
-      
+
       # starting to get the correct number of socket to calculate the correct number of subscription to attach
       if @options[:debug]
         puts " DEBUG: Checking the number of socket for #{sys["name"]}"
@@ -1431,15 +1431,19 @@ def printsubsreport()
   end
   CSV.open(@options[:subreportfile], "wb", {:col_sep => ";"}) do |csv|
     # header of csv
-    csv << ["Subscription Name","Expected Quantity","Quantity Available","Quantity Consumed","Quantity Free"]
+    csv << ["Subscription Name","Expected Quantity","Quantity Available","Quantity Consumed","Quantity Free", "State"]
     @subs_count.each do |sub_name, sub_count|
       sub_hash = getsubdetailfor(sub_name)
-      csv << [sub_name, sub_count, sub_hash["available"], sub_hash["consumed"], sub_hash["free"]]
+      count_state = "OK"
+      if sub_count.to_i > sub_hash["available"].to_i
+        count_state = "ERROR"
+      end
+      csv << [sub_name, sub_count, sub_hash["available"], sub_hash["consumed"], sub_hash["free"], count_state]
     end
   end
   CSV.open(@options[:detailedsubreportfile], "wb", {:col_sep => ";"}) do |csv|
     # header of csv
-    csv << ["Server Name", "Expected Subscription", "Expected Quantity"]
+    csv << ["Server Name", "Expected Subscription", "Expected Quantity", "Type"]
     @detailed_report.each do |sub_entry|
       csv << [sub_entry["hostname"], sub_entry["subname"], sub_entry["quantity"], sub_entry["type"]]
     end
