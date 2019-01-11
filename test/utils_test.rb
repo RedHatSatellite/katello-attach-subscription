@@ -21,4 +21,8 @@ class UtilsTest < Minitest::Test
   def test_search_args_array
     assert_equal 'something and else', KatelloAttachSubscription::Utils.search_args(['something', 'else', nil])
   end
+
+  def test_search_args_array_mixed
+    assert_equal 'something=1 and different="maybe"', KatelloAttachSubscription::Utils.search_args(['something=1', {different: "maybe"}])
+  end
 end
