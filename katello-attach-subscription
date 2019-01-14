@@ -914,6 +914,17 @@ def vdcupdate()
         end
       end
 
+      use_derived = false
+      # get the value of use_derived from the yaml sub entry, if setted
+      if sub.has_key?('use_derived')
+        use_derived = sub['use_derived']
+        if @options[:debug]
+          if use_derived
+            puts "  DEBUG: use_derived set to #{use_derived}"
+          end
+        end
+      end
+
       # if hosts is an hypervisor, check if it's empty or in a low density cluster to attach or not subscription
       if system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
         skip_density = false
@@ -994,7 +1005,6 @@ def vdcupdate()
         if @options[:verbose]
           puts "   VERBOSE: System #{system['name']} is a Guest and desire stack-derived sub, search for it"
         end
-        # subscriptions?available_for=host&host_id=HOST_ID
         subfiltertype = "STACK_DERIVED"
         attached_sub_response = @api.resource(:host_subscriptions).call(:index, {:organization_id => @options[:org], :host_id => system['id']})
         attached_sub_response['results'].each do |attached_sub|
@@ -1393,12 +1403,13 @@ def vdcupdate()
               end
               missing_hash = subs[sub_missing]
               sub_socket = missing_hash['sockets']
-              desired_quantity = (sys_socket.to_f/sub_socket.to_f).ceil
               if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST
                 desired_quantity = 1
                 if @options[:debug]
                   puts "      DEBUG: #{system['name']} is a guest, desired_quantity setted to 1"
                 end
+              else
+                desired_quantity = (sys_socket.to_f/sub_socket.to_f).ceil
               end
               if @options[:debug]
                 puts "      DEBUG: Added #{desired_quantity} of #{missing_hash['name']} (#{missing_hash['name']}) for #{system['name']}"
