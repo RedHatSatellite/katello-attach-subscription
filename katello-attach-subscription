@@ -861,13 +861,14 @@ def vdcupdate()
       if @options[:density] and system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
         # retrieve cluster name of the hypervisor
         if sys.has_key?('facts') and sys['facts'].has_key?('hypervisor::cluster')
-         this_system_cluster = sys['facts']['hypervisor::cluster']
+          this_system_cluster = sys['facts']['hypervisor::cluster']
         end
         if @options[:debug]
           puts "   DEBUG: system cluster: #{this_system_cluster}"
         end
         if this_system_cluster == 'nil'
-          sys.merge!({"facts"=>{'hypervisor::cluster'=>this_system_cluster}})
+          sys['facts'] ||= {}
+          sys['facts']['hypervisor::cluster'] = this_system_cluster
         end
       end
       if KatelloAttachSubscription::HostMatcher.match_hostname(sub['hostname'], system['name'])
@@ -901,7 +902,7 @@ def vdcupdate()
         puts "VERBOSE: Start testing facts value for #{sys['name']}"
       end
       fact_test_passed = KatelloAttachSubscription::HostMatcher.match_host(sys, sub)
-      if not fact_test_passed
+      unless fact_test_passed
         if @options[:verbose]
           puts "  VERBOSE: Host #{sys['name']} doesn't pass facts test. Skip to the next sub entry."
         end
@@ -983,7 +984,7 @@ def vdcupdate()
           skip_hypervisor ||= !hypervisor_has_guests(sys)
         end
       end
-      
+
       # starting to get the correct number of socket to calculate the correct number of subscription to attach
       if @options[:debug]
         puts " DEBUG: Checking the number of socket for #{sys["name"]}"
