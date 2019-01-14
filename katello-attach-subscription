@@ -795,7 +795,6 @@ def vdcupdate()
     desired_quantity = 1
     sys_socket = 1
     hypervisor_found = false
-    system_type = ""
     this_system_cluster = ""
     skip_hypervisor = false
     sys = nil
@@ -859,18 +858,20 @@ def vdcupdate()
           next
         end
       end
+
       this_system_cluster = 'nil'
       skip_sub = true
       if @options[:density] and system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
         # retrieve cluster name of the hypervisor
         if sys.has_key?('facts') and sys['facts'].has_key?('hypervisor::cluster')
-         this_system_cluster = sys['facts']['hypervisor::cluster']
+          this_system_cluster = sys['facts']['hypervisor::cluster']
         end
         if @options[:debug]
           puts "   DEBUG: system cluster: #{this_system_cluster}"
         end
         if this_system_cluster == 'nil'
-          sys.merge!({"facts"=>{'hypervisor::cluster'=>this_system_cluster}})
+          sys['facts'] ||= {}
+          sys['facts']['hypervisor::cluster'] = this_system_cluster
         end
       end
       if KatelloAttachSubscription::HostMatcher.match_hostname(sub['hostname'], system['name'])
@@ -903,6 +904,7 @@ def vdcupdate()
       if @options[:verbose]
         puts "VERBOSE: Start testing facts value for #{sys['name']}"
       end
+
       if sub.has_key?('facts')
         fact_test_passed = KatelloAttachSubscription::HostMatcher.match_host(sys, sub)
       else
@@ -911,7 +913,8 @@ def vdcupdate()
         end
         fact_test_passed = true
       end
-      if not fact_test_passed
+      unless fact_test_passed
+
         if @options[:verbose]
           puts "  VERBOSE: Host #{sys['name']} doesn't pass facts test. Skip to the next sub entry."
         end
@@ -1051,7 +1054,7 @@ def vdcupdate()
         keep_virt_only = sub['keep_virt_only']
       end
 
-      # if the system is found, stop cyclyng over yaml,
+      # if the system is found and sub_layer is "stop_parsing", stop cyclyng over yaml
       if sub_layer == "stop_parsing"
         break
       end
