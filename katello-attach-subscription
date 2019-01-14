@@ -1598,8 +1598,7 @@ end
 # count the total number of subs available, consumed and free
 def getsubdetailfor(sub_name)
   detail_hash = {"consumed" => 0, "free" => 0}
-  search_params = 'name="'+sub_name+'"'
-  search_options = KatelloAttachSubscription::Utils.search_args(search_params)
+  search_options = KatelloAttachSubscription::Utils.search_args(name: sub_name)
   parsed_subscription = fetch_all_results(:subscriptions,:index,{:search => search_options, :available_for => "host"})
   detail_hash["available"] = getavailablesubfor(parsed_subscription)
   detail_hash["consumed"] = getconsumedsubfor(parsed_subscription)
