@@ -796,10 +796,12 @@ def vdcupdate()
     sys_socket = 1
     hypervisor_found = false
     this_system_cluster = ""
-    skip_hypervisor = false
     sys = nil
     skip_report = false
     sub_counted = []
+
+    skip_host = false
+    has_derived_sub = false
 
     # add to array system the name of the system itself taken from id
     if @options[:verbose]
@@ -912,6 +914,17 @@ def vdcupdate()
         end
       end
 
+      use_derived = false
+      # get the value of use_derived from the yaml sub entry, if setted
+      if sub.has_key?('use_derived')
+        use_derived = sub['use_derived']
+        if @options[:debug]
+          if use_derived
+            puts "  DEBUG: use_derived set to #{use_derived}"
+          end
+        end
+      end
+
       # if hosts is an hypervisor, check if it's empty or in a low density cluster to attach or not subscription
       if system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
         skip_density = false
@@ -925,9 +938,9 @@ def vdcupdate()
         end
         if @options[:density] and not skip_density
           if not @full_cluster.include? this_system_cluster
-            # if empty remove and set skip_hypervisor to true
+            # if empty remove and set skip_host to true
             puts "  Hypervisor #{sys['name']} is in #{this_system_cluster} that isn't in an full cluster. Proced to removing subcription"
-            skip_hypervisor = true
+            skip_host = true
             # start subscription removing from hypervisor
             begin
               rem_sub_response = @api.resource(:host_subscriptions).call(:index, {:host_id => system['id']})
@@ -980,7 +993,75 @@ def vdcupdate()
         end
 
         if @options[:emptyhypervisor]
-          skip_hypervisor ||= !hypervisor_has_guests(sys)
+          skip_host ||= !hypervisor_has_guests(sys)
+        end
+      end
+
+      derived_sub = {}
+      attachable_subs = []
+      # if system is a guest and density option is on, check if use_derived is true
+      if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST and @options[:density] and use_derived
+        # if so, fetch the stack-derived sub available for that host and replace the one in sub_parsing
+        if @options[:verbose]
+          puts "   VERBOSE: System #{system['name']} is a Guest and desire stack-derived sub, search for it"
+        end
+        subfiltertype = "STACK_DERIVED"
+        attached_sub_response = @api.resource(:host_subscriptions).call(:index, {:organization_id => @options[:org], :host_id => system['id']})
+        attached_sub_response['results'].each do |attached_sub|
+          if attached_sub['type'] == subfiltertype
+            if @options[:debug]
+              puts "    DEBUG: Sub #{attached_sub['cp_id']} is #{subfiltertype}"
+            end
+            has_derived_sub = true
+          end
+        end
+        begin
+          attachable_subs = fetch_all_results(:subscriptions,:index,{:available_for => "host", :host_id => system['id']})
+        rescue Exception => e
+          STDERR.puts "WARNING: Can't fetch available subscription for host #{system['name']} (#{system['id']}). Check on Satellite"
+          STDERR.puts e
+          break
+        end
+        # if the lookup has given no results at all, no subscriptions has to be added
+        if attachable_subs.empty?
+          puts "    Subscription parsing results of search string '#{subscription_item}' is empty, not adding any subscription"
+          next
+        end
+        if @options[:debug]
+          puts "  DEBUG: retrieved subscription"
+          p attachable_subs
+        end
+        # if empty, so zero results, this will be simply skipped
+        attachable_subs.each do |single_sub|
+          if @options[:debug]
+            puts "   DEBUG: subscription detail for subscription #{single_sub['cp_id']}:"
+            p single_sub
+          end
+          # check if sub isn't stack_derived
+          if single_sub['type'] != subfiltertype
+            if @options[:debug]
+              puts "   Skipping '#{single_sub['cp_id']}' as system type '#{single_sub['type']}' is different from desired '#{subfiltertype}'"
+            end
+            # if the filter do not match, skip to next subscription
+            next
+          end
+          # create product_id key in the derived_sub dictionary if product_id is not yet present in it
+          if not derived_sub.has_key?(single_sub['product_id'])
+            derived_sub[single_sub['product_id']] = []
+          end
+          derived_sub[single_sub['product_id']].push(single_sub['cp_id'])
+        end
+        if @options[:debug]
+          puts "      DEBUG: Subscription to attach at guest #{system['name']}"
+          p derived_sub
+        end
+        if derived_sub.empty?
+          if @options[:verbose]
+            puts "     VERBOSE: No sub available to be attached for #{system['name']}"
+          end
+        else
+          # set change sub to true will attach the derivated one from
+          has_derived_sub = true
         end
       end
 
@@ -1013,7 +1094,11 @@ def vdcupdate()
       end
       # set the desidered subscription to be associated
       if sub.has_key?('sub_parsed')
-        desired_sub_hash = sub['sub_parsed']
+        if has_derived_sub
+          desired_sub_hash = derived_sub
+        else
+          desired_sub_hash = sub['sub_parsed']
+        end
       end
       # if "remove_other" has been set, set the flag
       if sub.has_key?('remove_other')
@@ -1040,9 +1125,9 @@ def vdcupdate()
       break
 
     end
-    if skip_hypervisor
+    if skip_host
       if @options[:verbose]
-        puts " VERBOSE: Skipping #{system['name']} as Hypervisor and there is nothing to do more."
+        puts " VERBOSE: Skipping #{system['name']} as host doesn't need nothing more to do."
       end
       next
     end
@@ -1108,11 +1193,18 @@ def vdcupdate()
               sockets_limit = 1
             end
             system_socket = sys_socket
-            total_subscriptions = (system_socket.to_f/sockets_limit.to_f).ceil
+            if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST
+              total_subscriptions = 1
+              if @options[:verbose]
+                puts "    VERBOSE: Host #{system['name']} is a guest, total subscriptions needed setted to 1"
+              end
+            else
+              total_subscriptions = (system_socket.to_f/sockets_limit.to_f).ceil
+            end
             puts "  #{system['name']} need #{total_subscriptions} subscriptions for sub #{sub['id']}"
             subscriptions_needed = total_subscriptions - sub['quantity_consumed'].to_i
 
-            if @options[:subreport]
+            if @options[:subreport] and not has_derived_sub
               # count the sub to add, if not just present
               if @options[:debug]
                 puts "      DEBUG: Current counted sub: #{sub_counted}"
@@ -1131,21 +1223,9 @@ def vdcupdate()
               end
             end
             # check sub needed < 0, clean and attach
-            if subscriptions_needed < 0
-              puts "  WARNING: Subscription #{sub['id']} attached #{sub['quantity_consumed']} that is > of quantity needed: #{subscriptions_needed}, remove and reattach"
-              if not @options[:noop]
-                puts "  removed #{sub['id']} - #{sub['cp_id']}"
-                @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
-              else
-                puts "  [noop]: #{sub['id']} - #{sub['cp_id']} would be removed"
-              end
-              subscriptions_needed = total_subscriptions
-            end
-            if subscriptions_needed == 0
-              puts "  subscription #{sub['cp_id']} for #{product} product is already attached to #{system['name']}"
-            else
-              puts "  subscription #{sub['cp_id']} for #{product} product is attached to #{system['name']}, but still need #{subscriptions_needed} sub"
-              if sub['available'] >= subscriptions_needed
+            if not has_derived_sub
+              if subscriptions_needed < 0
+                puts "  WARNING: Subscription #{sub['id']} attached #{sub['quantity_consumed']} that is > of quantity needed: #{subscriptions_needed}, remove and reattach"
                 if not @options[:noop]
                   # currently seems not working as a bug, uncomment change the code lines for a temporary workaround
                   @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
@@ -1153,10 +1233,27 @@ def vdcupdate()
                   # @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => subscriptions_needed}]})
                   puts "    Added #{subscriptions_needed} more subscriptions of #{sub['id']} to #{system['name']}"
                 else
-                  puts "    [noop]: Would be added #{subscriptions_needed} more subscriptions of #{sub['id']} to #{system['name']}"
+                  puts "  [noop]: #{sub['id']} - #{sub['cp_id']} would be removed"
                 end
+                subscriptions_needed = total_subscriptions
+              end
+              if subscriptions_needed == 0
+                puts "  subscription #{sub['cp_id']} for #{product} product is already attached to #{system['name']}"
               else
-                puts " Skipping attaching the remaining subscription of #{sub['id']} for #{system['name']} because #{subscriptions_needed} requested but #{sub['available']} available"
+                puts "  subscription #{sub['cp_id']} for #{product} product is attached to #{system['name']}, but still need #{subscriptions_needed} sub"
+                if sub['available'] >= subscriptions_needed
+                  if not @options[:noop]
+                    # currently seems not working as a bug, uncomment change the code lines for a temporary workaround
+                    @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
+                    @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => total_subscriptions}]})
+                    # @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => subscriptions_needed}]})
+                    puts "    Added #{subscriptions_needed} more subscriptions of #{sub['id']} to #{system['name']}"
+                  else
+                    puts "    [noop]: Would be added #{subscriptions_needed} more subscriptions of #{sub['id']} to #{system['name']}"
+                  end
+                else
+                  puts " Skipping attaching the remaining subscription of #{sub['id']} for #{system['name']} because #{subscriptions_needed} requested but #{sub['available']} available"
+                end
               end
             end
             has_desired_sub = true
@@ -1206,28 +1303,42 @@ def vdcupdate()
               exit 1
             end
             # Start checking the needed subscriptions for every hosts
-            system_socket = sys_socket
-            puts " Start calculating the correct number of subscriptions #{subs[desired_sub]['id']} needed for #{system['name']}"
-            # if field socket is present, the max sockets managed for every subscription is in sockets field
-            if subs[desired_sub].has_key?('sockets')
-              if subs[desired_sub]['sockets'].to_i > 0
-                sub_socket = subs[desired_sub]['sockets'].to_i
-                if @options[:debug]
-                  puts "    DEBUG: Subscription #{subs[desired_sub]['id']} limit of socket is #{sub_socket}"
+            if not has_derived_sub
+              system_socket = sys_socket
+              puts " Start calculating the correct number of subscriptions #{subs[desired_sub]['id']} needed for #{system['name']}"
+              # if field socket is present, the max sockets managed for every subscription is in sockets field
+              if subs[desired_sub].has_key?('sockets')
+                if subs[desired_sub]['sockets'].to_i > 0
+                  sub_socket = subs[desired_sub]['sockets'].to_i
+                  if @options[:debug]
+                    puts "    DEBUG: Subscription #{subs[desired_sub]['id']} limit of socket is #{sub_socket}"
+                  end
+                else
+                  puts "FATAL ERROR: The limit for the number of sockets of #{subs[desired_sub]['name']} (ID: #{subs[desired_sub]['id']}, CPID: #{subs[desired_sub]['cp_id']}) is invalid"
+                  exit 5
                 end
               else
-                puts "FATAL ERROR: The limit for the number of sockets of #{subs[desired_sub]['name']} (ID: #{subs[desired_sub]['id']}, CPID: #{subs[desired_sub]['cp_id']}) is invalid"
-                exit 5
+              # if no subscription socket limit data is present use 1 by default
+                if @options[:debug]
+                  puts "    DEBUG: No subscription socket limit specification found. Setting 1 by default"
+                end
+              end
+              # calculate the correct number, eg: if system has 8 sockets but subs grant only 2 sockets, we need 4 subs
+              # ceiling data it's to prevent 0 subs needed if hosts has 1 socket but subs has 2 or more like sockets limit
+              if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST
+                desired_quantity = 1
+                if @options[:verbose]
+                  puts "    VERBOSE: Host #{system['name']} is a guest, desired_quantity for #{subs[desired_sub]['cp_id']} setted to 1"
+                end
+              else
+                desired_quantity = (system_socket.to_f/sub_socket.to_f).ceil
               end
             else
-            # if no subscription socket limit data is present use 1 by default
               if @options[:debug]
-                puts "    DEBUG: No subscription socket limit specification found. Setting 1 by default"
+                puts "    DEBUG: Host #{system['name']} has Stack_derived subs to be attached, desired quantity set to 0"
               end
+              desired_quantity = 0
             end
-            # calculate the correct number, eg: if system has 8 sockets but subs grant only 2 sockets, we need 4 subs
-            # ceiling data it's to prevent 0 subs needed if hosts has 1 socket but subs has 2 or more like sockets limit
-            desired_quantity = (system_socket.to_f/sub_socket.to_f).ceil
             puts "   The number of subscriptions needed for #{desired_sub} (id: #{subs[desired_sub]['id']}) is of #{desired_quantity}"
 
             # if there are not enough available subscriptions check the next available
@@ -1236,7 +1347,7 @@ def vdcupdate()
               next
             end
 
-            if @options[:subreport]
+            if @options[:subreport] and not has_derived_sub
               # count the sub to add, if not just present
               if @options[:debug]
                 puts "      DEBUG: Current counted sub: #{sub_counted}"
@@ -1285,22 +1396,30 @@ def vdcupdate()
           end
 
           # if no sub attached but needed, add to the count that you need the first one
-          if not sub_attached
-            # mark as missing the first desired_subs entry
-            sub_missing = desired_subs_hash.first
-            if @options[:verbose]
-              puts "    VERBOSE: #{system['name']} didn't attach any #{product} sub, set that need #{sub_missing}"
+          if @options[:subreport] and not has_derived_sub
+            if not sub_attached
+              # mark as missing the first desired_subs entry
+              sub_missing = desired_subs_hash.first
+              if @options[:verbose]
+                puts "    VERBOSE: #{system['name']} didn't attach any #{product} sub, set that need #{sub_missing}"
+              end
+              missing_hash = subs[sub_missing]
+              sub_socket = missing_hash['sockets']
+              if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST
+                desired_quantity = 1
+                if @options[:debug]
+                  puts "      DEBUG: #{system['name']} is a guest, desired_quantity setted to 1"
+                end
+              else
+                desired_quantity = (sys_socket.to_f/sub_socket.to_f).ceil
+              end
+              if @options[:debug]
+                puts "      DEBUG: Added #{desired_quantity} of #{missing_hash['name']} (#{missing_hash['name']}) for #{system['name']}"
+              end
+              addtototalsubneeded(system['name'], missing_hash['name'], desired_quantity)
+              skip_report = true
             end
-            missing_hash = subs[sub_missing]
-            sub_socket = missing_hash['sockets']
-            desired_quantity = (sys_socket.to_f/sub_socket.to_f).ceil
-            if @options[:debug]
-              puts "      DEBUG: Added #{desired_quantity} of #{missing_hash['name']} (#{missing_hash['name']}) for #{system['name']}"
-            end
-            addtototalsubneeded(system['name'], missing_hash['name'], desired_quantity)
-            skip_report = true
           end
-
         end
       end
     end
