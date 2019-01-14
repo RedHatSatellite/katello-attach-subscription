@@ -52,6 +52,7 @@ $stdout.sync = true
   :densityvalue     => 5,
   :subreport        => false,
   :subreportfile    => 'sub-report.csv',
+  :detailedsubreportfile => 'detailed-report.csv',
   :verify_ssl       => true
 }
 
@@ -207,6 +208,9 @@ end
 
 # array with all the guest detail for the guest/host/cluster report
 @guest_list = []
+
+# array with all the subs consumed by all the hosts
+@detailed_report = []
 
 # check functions
 def checksubs()
@@ -851,42 +855,28 @@ def vdcupdate()
         end
       end
 
+      this_system_cluster = 'nil'
       skip_sub = true
       if @options[:density] and system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
-        if not sub.has_key?('cluster')
-          puts "FATAL ERROR: --check-density option enabled but no 'cluster' regex found in the yaml for this sub entry"
-          p sub
-          exit 5
-        end
+        # retrieve cluster name of the hypervisor
         if sys.has_key?('facts') and sys['facts'].has_key?('hypervisor::cluster')
           this_system_cluster = sys['facts']['hypervisor::cluster']
-        else
-          this_system_cluster = 'nil'
         end
-
         if @options[:debug]
           puts "   DEBUG: system cluster: #{this_system_cluster}"
-          puts "   DEBUG: sub cluster regex: #{sub['cluster']}"
         end
-        # if match passare
-        if KatelloAttachSubscription::HostMatcher.match_regexp(sub['cluster'], this_system_cluster)
-          if @options[:verbose]
-            puts " VERBOSE: System cluster #{this_system_cluster} match sub cluster regex #{sub['cluster']}"
-          end
-          skip_sub = false
-        else
-          if @options[:verbose]
-            puts " VERBOSE: Skipping as cluster #{this_system_cluster} doesn't match sub cluster type #{sub['cluster']}"
-          end
-        end
-      else
-        if KatelloAttachSubscription::HostMatcher.match_hostname(sub['hostname'], system['name'])
-          if @options[:debug]
-            puts " DEBUG: System '#{system['name']}' match the regexp '#{sub['hostname']}'"
-          end
-          skip_sub = false
+        if this_system_cluster == 'nil'
+          sys['facts'] ||= {}
+          sys['facts']['hypervisor::cluster'] = this_system_cluster
         end
       end
+      if KatelloAttachSubscription::HostMatcher.match_hostname(sub['hostname'], system['name'])
+        if @options[:debug]
+          puts " DEBUG: System '#{system['name']}' match the regexp '#{sub['hostname']}'"
+        end
+        skip_sub = false
+      end
+
       # skip the sub if setted
       if skip_sub
         if @options[:verbose]
@@ -906,13 +896,37 @@ def vdcupdate()
       else
         virtualhostregex = nil
       end
+      # test all the facts
+      if @options[:verbose]
+        puts "VERBOSE: Start testing facts value for #{sys['name']}"
+      end
+      fact_test_passed = KatelloAttachSubscription::HostMatcher.match_host(sys, sub)
+      unless fact_test_passed
+        if @options[:verbose]
+          puts "  VERBOSE: Host #{sys['name']} doesn't pass facts test. Skip to the next sub entry."
+        end
+        next
+      else
+        if @options[:verbose]
+          puts "  VERBOSE: Host #{sys['name']} pass fact test. Proceed to attach sub."
+        end
+      end
 
       # if hosts is an hypervisor, check if it's empty or in a low density cluster to attach or not subscription
       if system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
-        if @options[:density]
-          if @empty_cluster.include? this_system_cluster
+        skip_density = false
+        if sub.has_key?('skip_density')
+          skip_density = sub['skip_density']
+          if @options[:debug]
+            if skip_density
+              puts "  DEBUG: skip_density set to true, skip density check of cluster #{this_system_cluster}"
+            end
+          end
+        end
+        if @options[:density] and not skip_density
+          if not @full_cluster.include? this_system_cluster
             # if empty remove and set skip_hypervisor to true
-            puts "  Hypervisor #{sys['name']} is in #{this_system_cluster} that is an empty cluster. Proced to removing subcription"
+            puts "  Hypervisor #{sys['name']} is in #{this_system_cluster} that isn't in an full cluster. Proced to removing subcription"
             skip_hypervisor = true
             # start subscription removing from hypervisor
             begin
@@ -969,6 +983,7 @@ def vdcupdate()
           skip_hypervisor ||= !hypervisor_has_guests(sys)
         end
       end
+
       # starting to get the correct number of socket to calculate the correct number of subscription to attach
       if @options[:debug]
         puts " DEBUG: Checking the number of socket for #{sys["name"]}"
@@ -1020,8 +1035,10 @@ def vdcupdate()
       if sub.has_key?('keep_virt_only')
         keep_virt_only = sub['keep_virt_only']
       end
+
       # if the system is found, stop cyclyng over yaml,
       break
+
     end
     if skip_hypervisor
       if @options[:verbose]
@@ -1103,7 +1120,7 @@ def vdcupdate()
               # if not present, call addtototalsubneeded to add the count of subs
               if not sub_counted.include?(sub['name'])
                 skip_report = true
-                addtototalsubneeded(sub['name'], total_subscriptions)
+                addtototalsubneeded(system['name'], sub['name'], total_subscriptions)
                 # add to the subs counted
                 sub_counted.push(sub['name'])
               else
@@ -1131,9 +1148,9 @@ def vdcupdate()
               if sub['available'] >= subscriptions_needed
                 if not @options[:noop]
                   # currently seems not working as a bug, uncomment change the code lines for a temporary workaround
-                  # @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
-                  # @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => total_subscriptions}]})
-                  @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => subscriptions_needed}]})
+                  @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
+                  @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => total_subscriptions}]})
+                  # @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => subscriptions_needed}]})
                   puts "    Added #{subscriptions_needed} more subscriptions of #{sub['id']} to #{system['name']}"
                 else
                   puts "    [noop]: Would be added #{subscriptions_needed} more subscriptions of #{sub['id']} to #{system['name']}"
@@ -1227,7 +1244,7 @@ def vdcupdate()
               # if not present, call addtototalsubneeded to add the count of subs
               if not sub_counted.include?(subs[desired_sub]['name'])
                 skip_report = true
-                addtototalsubneeded(subs[desired_sub]['name'], desired_quantity)
+                addtototalsubneeded(system['name'], subs[desired_sub]['name'], desired_quantity)
                 # add to the subs counted
                 sub_counted.push(subs[desired_sub]['name'])
                 sub_attached = true
@@ -1280,7 +1297,7 @@ def vdcupdate()
             if @options[:debug]
               puts "      DEBUG: Added #{desired_quantity} of #{missing_hash['name']} (#{missing_hash['name']}) for #{system['name']}"
             end
-            addtototalsubneeded(missing_hash['name'], desired_quantity)
+            addtototalsubneeded(system['name'], missing_hash['name'], desired_quantity)
             skip_report = true
           end
 
@@ -1293,12 +1310,12 @@ def vdcupdate()
       puts " auto-attaching subs to system #{system['name']}"
       if not @options[:noop]
         api.resource(:host_subscriptions).call(:auto_attach, {:host_id => system['id']})
+        if @options[:subreport]
+          # call function that get all the sub consumed and count only physical sub as stacked-derived are for unlimited guest
+          addspecialsubtocount(system)
+        end
       else
         puts " [noop] auto-attached"
-      end
-      if @options[:subreport]
-        # call function that get all the sub consumed and count only physical sub as stacked-derived are for unlimited guest
-        addspecialsubtocount(system['id'])
       end
     end
 
@@ -1386,7 +1403,8 @@ def hypervisor_has_guests(hostdata)
 end
 
 # add the value of sub passed in sub_quantity to the sub passed in sub_name in subs_count hash
-def addtototalsubneeded(sub_name, sub_quantity)
+# def addtototalsubneeded(sub_name, sub_quantity)
+def addtototalsubneeded(hostname, sub_name, sub_quantity, type = "")
   if @options[:verbose]
     puts "    VERBOSE: Adding #{sub_quantity} to needed quantity of subscription #{sub_name}"
   end
@@ -1396,6 +1414,14 @@ def addtototalsubneeded(sub_name, sub_quantity)
   end
   # add the count to the sub passed
   @subs_count[sub_name] += sub_quantity
+
+  # added detailed report data
+  detailed_entry = {}
+  detailed_entry['hostname'] = hostname
+  detailed_entry['subname'] = sub_name
+  detailed_entry['quantity'] = sub_quantity
+  detailed_entry['type'] = type
+  @detailed_report.push(detailed_entry)
 end
 
 # create the CSV file that report the subscription count
@@ -1405,18 +1431,25 @@ def printsubsreport()
   end
   CSV.open(@options[:subreportfile], "wb", {:col_sep => ";"}) do |csv|
     # header of csv
-    csv << ["Subscription Name","Quantity Needed","Quantity Available","Quantity Consumed","Quantity Free"]
-    # csv << ["Subscription Name","Subscription Name","Quantity Needed","Quantity Consumed","Available"]
+    csv << ["Subscription Name","Expected Quantity","Quantity Available","Quantity Consumed","Quantity Free"]
     @subs_count.each do |sub_name, sub_count|
       sub_hash = getsubdetailfor(sub_name)
       csv << [sub_name, sub_count, sub_hash["available"], sub_hash["consumed"], sub_hash["free"]]
+    end
+  end
+  CSV.open(@options[:detailedsubreportfile], "wb", {:col_sep => ";"}) do |csv|
+    # header of csv
+    csv << ["Server Name", "Expected Subscription", "Expected Quantity"]
+    @detailed_report.each do |sub_entry|
+      csv << [sub_entry["hostname"], sub_entry["subname"], sub_entry["quantity"], sub_entry["type"]]
     end
   end
 end
 
 # get all the subscriptions of the hosts for special case as:
 # - hosts that would be auto attached
-def addspecialsubtocount(system_id)
+def addspecialsubtocount(system)
+  system_id = system['id']
   attached_subscriptions = []
   # retrieve all the subscription attached
   begin
@@ -1437,15 +1470,7 @@ def addspecialsubtocount(system_id)
         if @options[:verbose]
           puts "      VERBOSE: Counting attached subscription #{sub_index+1} / #{response["total"].to_i} - #{attached_sub['id']}"
         end
-        # check type of sub (consider only normal one)
-        if attached_sub['type'] != "NORMAL"
-          if @options[:verbose]
-            puts "        VERBSOSE: Skipping as sub #{attached_sub['id']} is #{attached_sub['type']} that is different from NORMAL"
-          end
-        else
-          # add the founded sub to the total needed
-          addtototalsubneeded(attached_sub['name'], attached_sub['quantity_consumed'])
-        end
+        addtototalsubneeded(system['name'], attached_sub['name'], attached_sub['quantity_consumed'], attached_sub['type'])
       end
     end
   end
