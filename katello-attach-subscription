@@ -212,6 +212,13 @@ end
 # array with all the subs consumed by all the hosts
 @detailed_report = []
 
+@exception_sub = [
+  "Red Hat Enterprise Linux Server, Standard (Physical or Virtual Nodes)",
+  "Red Hat Enterprise Linux Server, Premium (Physical or Virtual Nodes)",
+  "Smart Management",
+  "Red Hat Enterprise Linux Extended Life Cycle Support (Physical or Virtual Nodes)"
+]
+
 # check functions
 def checksubs()
   # initialize variables
@@ -1431,7 +1438,7 @@ def printsubsreport()
   end
   CSV.open(@options[:subreportfile], "wb", {:col_sep => ";"}) do |csv|
     # header of csv
-    csv << ["Subscription Name","Expected Quantity","Quantity Available","Quantity Consumed","Quantity Free", "State"]
+    csv << ["Subscription Name","Expected Entitlement","Entitlement Available","Entitlement Consumed","Entitlement Free", "State"]
     @subs_count.each do |sub_name, sub_count|
       sub_hash = getsubdetailfor(sub_name)
       count_state = "OK"
@@ -1439,6 +1446,27 @@ def printsubsreport()
         count_state = "ERROR"
       end
       csv << [sub_name, sub_count, sub_hash["available"], sub_hash["consumed"], sub_hash["free"], count_state]
+    end
+
+    csv << [""]
+    csv << [""]
+
+    csv << ["Subscription Name", "Instance Multiplier", "Expected Subscription", "Subscription Available", "Subscription Consumed", "Subscription Free", "State"]
+    @subs_count.each do |sub_name, sub_count|
+      sub_hash = getsubdetailfor(sub_name)
+      count_state = "OK"
+      instance_multiplier = 1
+      if @exception_sub.include?(sub_hash)
+        instance_multiplier = 2
+      end
+      sub_count = (sub_count.to_f/instance_multiplier.to_f).ceil
+      sub_available = (sub_hash["available"].to_f/instance_multiplier.to_f).ceil
+      sub_consumed = (sub_hash["consumed"].to_f/instance_multiplier.to_f).ceil
+      sub_free = sub_available - sub_consumed
+      if sub_count > sub_available
+        count_state = "ERROR"
+      end
+      csv << [sub_name, instance_multiplier, sub_count, sub_available, sub_consumed, sub_free, count_state]
     end
   end
   CSV.open(@options[:detailedsubreportfile], "wb", {:col_sep => ";"}) do |csv|
