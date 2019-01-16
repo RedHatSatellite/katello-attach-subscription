@@ -1456,7 +1456,7 @@ def printsubsreport()
       sub_hash = getsubdetailfor(sub_name)
       count_state = "OK"
       instance_multiplier = 1
-      if @exception_sub.include?(sub_hash)
+      if @exception_sub.include?(sub_name)
         instance_multiplier = 2
       end
       sub_count = (sub_count.to_f/instance_multiplier.to_f).ceil
