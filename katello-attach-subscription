@@ -1239,7 +1239,7 @@ def vdcupdate()
               end
             else
               # check if the host is physical and need to attach one of the sub present in the exception subscriptions list.
-              if system_type == KatelloAttachSubscription::FactAnalyzer::PHYSICAL and not @exception_sub.include?(sub['name'])
+              if system_type == KatelloAttachSubscription::FactAnalyzer::PHYSICAL and @exception_sub.include?(sub['name'])
                 # if so, sub is like RHEL Standard for Physical or Virtual nodes, that need instance_multiplier setted to 2
                 instance_multiplier = 2
               end
