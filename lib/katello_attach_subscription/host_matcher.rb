@@ -1,14 +1,32 @@
 module KatelloAttachSubscription
   class HostMatcher
-    def self.match_host(host, config)
+    def self.match_host(host, config, options = {})
       host['type'] = KatelloAttachSubscription::FactAnalyzer.system_type(host) unless host['type']
       valid = true
-      valid = false unless self.match_hostname(config['hostname'], host['name'])
-      valid = false unless self.match_type(config['type'], host['type'])
+      unless self.match_hostname(config['hostname'], host['name'])
+        valid = false
+        if options[:verbose]
+          puts "VERBOSE: #{host['name']} does not match #{config['hostname']}"
+        end
+      end
+      unless self.match_type(config['type'], host['type'])
+        valid = false
+        if options[:verbose]
+          puts "VERBOSE: #{host['name']} has type '#{host['type']}', not '#{config['type']}'"
+        end
+      end
       host_facts = host['facts'] || {}
       config.fetch('facts', []).each do |match|
         matcher = match['matcher'] || 'string'
-        valid = false unless self.match_matcher(match['value'], host_facts[match['name']], matcher)
+        fact = match['name']
+        actual = host_facts[fact]
+        expected = match['value']
+        unless self.match_matcher(expected, actual, matcher)
+          valid = false
+          if options[:verbose]
+            puts "VERBOSE: #{host['name']} has #{fact}='#{actual}', but we expected '#{expected}'"
+          end
+        end
       end
       valid
     end
