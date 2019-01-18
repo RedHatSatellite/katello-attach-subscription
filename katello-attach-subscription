@@ -1229,37 +1229,32 @@ def vdcupdate()
                 end
               end
             end
-            # check sub needed < 0, clean and attach
             if not has_derived_sub
-              if subscriptions_needed < 0
-                puts "  WARNING: Subscription #{sub['id']} attached #{sub['quantity_consumed']} that is > of quantity needed: #{subscriptions_needed}, remove and reattach"
-                if not @options[:noop]
-                  # currently seems not working as a bug, uncomment change the code lines for a temporary workaround
-                  @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
-                  @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => total_subscriptions}]})
-                  # @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => subscriptions_needed}]})
-                  puts "    Added #{subscriptions_needed} more subscriptions of #{sub['id']} to #{system['name']}"
-                else
-                  puts "  [noop]: #{sub['id']} - #{sub['cp_id']} would be removed"
-                end
-                subscriptions_needed = total_subscriptions
-              end
+              # check sub needed = 0
               if subscriptions_needed == 0
                 puts "  subscription #{sub['cp_id']} for #{product} product is already attached to #{system['name']}"
               else
-                puts "  subscription #{sub['cp_id']} for #{product} product is attached to #{system['name']}, but still need #{subscriptions_needed} sub"
+                # if subscriptions_needed != 0 then attached sub to the host consumed_quantity is < or > of the correct one.
+                if subscriptions_needed < 0
+                  puts "  WARNING: Subscription #{sub['id']} attached #{sub['quantity_consumed']} that is > of quantity needed: #{total_subscriptions}, sub would be removed and reattached"
+                else
+                  puts "  subscription #{sub['cp_id']} for #{product} product is attached to #{system['name']}, but still need to consume #{subscriptions_needed} token, sub would be removed and reattached"
+                end
+                # check if sub available sub are >= of the one needed as
+                # - if sub_needed > 0 then we need to see if (qty attached + qty to attach) < qty available
                 if sub['available'] >= subscriptions_needed
+                  # set subscriptions_needed to the total ones as current sub is to be removed and reattached consuming total_subscriptions sub.
+                  subscriptions_needed = total_subscriptions
                   if not @options[:noop]
-                    # currently seems not working as a bug, uncomment change the code lines for a temporary workaround
+                    puts "  removed #{sub['id']} - #{sub['cp_id']}"
                     @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
-                    @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => total_subscriptions}]})
-                    # @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => subscriptions_needed}]})
-                    puts "    Added #{subscriptions_needed} more subscriptions of #{sub['id']} to #{system['name']}"
+                    puts "  reattached #{sub['id']} - #{sub['cp_id']}"
+                    @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => subscriptions_needed}]})
                   else
-                    puts "    [noop]: Would be added #{subscriptions_needed} more subscriptions of #{sub['id']} to #{system['name']}"
+                    puts "  [noop]: #{sub['id']} - #{sub['cp_id']} would be removed and reattached with correct quantity: #{subscriptions_needed}"
                   end
                 else
-                  puts " Skipping attaching the remaining subscription of #{sub['id']} for #{system['name']} because #{subscriptions_needed} requested but #{sub['available']} available"
+                  puts " Skipping fixing the subscription of #{sub['id']} for #{system['name']} because #{subscriptions_needed} requested but #{sub['available']} available"
                 end
               end
             end
