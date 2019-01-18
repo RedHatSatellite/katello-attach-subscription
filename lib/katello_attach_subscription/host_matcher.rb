@@ -1,13 +1,14 @@
 module KatelloAttachSubscription
   class HostMatcher
     def self.match_host(host, config)
+      host['type'] = KatelloAttachSubscription::FactAnalyzer.system_type(host) unless host['type']
       valid = true
       valid = false unless self.match_hostname(config['hostname'], host['name'])
       valid = false unless self.match_type(config['type'], host['type'])
       host_facts = host['facts'] || {}
-      config.fetch('match', []).each do |match|
+      config.fetch('facts', []).each do |match|
         matcher = match['matcher'] || 'string'
-        valid = false unless self.match_matcher(match['value'], host_facts[match['fact']], matcher)
+        valid = false unless self.match_matcher(match['value'], host_facts[match['name']], matcher)
       end
       valid
     end
@@ -24,9 +25,9 @@ module KatelloAttachSubscription
       case matcher
       when 'string'
         self.match_string(expected, actual)
-      when 'version'
+      when 'version', 'vercmp'
         self.match_version(expected, actual)
-      when 'regexp'
+      when 'regexp', 'regex'
         self.match_regexp(expected, actual)
       else
         false
