@@ -9,6 +9,22 @@ class HostMatcherTest < Minitest::Test
       ]
   }
 
+  def setup
+    @config = read_yaml_fixture('prod_config')
+
+    @subs = @config[:subs]
+    @sub_hv_prod = @subs[0]
+    @sub_hv_preprod = @subs[1]
+    @sub_hv_both = @subs[2]
+    @sub_phys_server_els = @subs[3]
+    @sub_phys_server = @subs[4]
+    @sub_phys_client_els = @subs[5]
+    @sub_phys_client = @subs[6]
+
+    @systems = read_yaml_fixture('prod_systems')
+    @virtwhodata = read_json_fixture('prod_virtwho')
+  end
+
   def test_hostname
     assert KatelloAttachSubscription::HostMatcher.match_hostname('client[0-9]+\.example\.com', 'client42.example.com')
   end
@@ -58,5 +74,31 @@ class HostMatcherTest < Minitest::Test
     # this host does not have 12 sockets
     host = read_json_fixture('rhel_kvm_vm_host')
     refute KatelloAttachSubscription::HostMatcher.match_host(host, DUMMY_CONFIG)
+  end
+
+  def test_skip_sub_for_hypervisor
+    host = read_json_fixture('vmware_esx_host')
+    sub = {'type' => 'Hypervisor', 'cluster' => '.*'}
+    options = {density: true}
+    refute KatelloAttachSubscription::HostMatcher.skip_sub?(host, sub, options)
+  end
+
+  def test_skip_sub_for_host
+    host = read_json_fixture('rhel_kvm_vm_host')
+    sub = {'hostname' => '.*'}
+    refute KatelloAttachSubscription::HostMatcher.skip_sub?(host, sub)
+  end
+
+  def test_skip_sub_for_host_bad
+    host = read_json_fixture('rhel_kvm_vm_host')
+    sub = {'hostname' => '.*\.example\.org'}
+    assert KatelloAttachSubscription::HostMatcher.skip_sub?(host, sub)
+  end
+
+  def test_skip_sub_prod
+    refute KatelloAttachSubscription::HostMatcher.skip_sub?(@systems['physical3.rhel6.example.org'], @sub_phys_server)
+    assert KatelloAttachSubscription::HostMatcher.skip_sub?(@systems['physical3.rhel6.example.org'], @sub_phys_server_els)
+    refute KatelloAttachSubscription::HostMatcher.skip_sub?(@systems['physical1.rhel5.example.org'], @sub_phys_server_els)
+    assert KatelloAttachSubscription::HostMatcher.skip_sub?(@systems['physical1.rhel5.example.org'], @sub_phys_server)
   end
 end
