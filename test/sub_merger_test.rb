@@ -14,11 +14,11 @@ class SubMergerTest < Minitest::Test
   }
 
   DUMMY_KEEP_PARSE_EXPECTED_SUB = {
-    "rhel": [
+    "rhel"=> [
       "b1a5d251fa4fe598cb947ffc42b9cbed",
       "1337d38747e659ed836548ae6cda7cc2"
     ],
-    "smartmanagement": [
+    "smartmanagement"=> [
       "f180623caa42379bc4518d06c9c9be05"
     ]
   }
@@ -36,14 +36,14 @@ class SubMergerTest < Minitest::Test
   }
 
   DUMMY_MERGE_EXPECTED_SUB = {
-    "rhel": [
+    "rhel"=> [
         "b1a5d251fa4fe598cb947ffc42b9cbed",
         "1337d38747e659ed836548ae6cda7cc2"
     ],
-    "smartmanagement": [
+    "smartmanagement"=> [
       "f180623caa42379bc4518d06c9c9be05"
     ],
-    "els": [
+    "els"=> [
       "523af537946b79c4f8369ed39ba78605"
     ]
   }
@@ -60,10 +60,10 @@ class SubMergerTest < Minitest::Test
   }
 
   DUMMY_OVERRIDE_EXPECTED_SUB = {
-    "rhel": [
+    "rhel"=> [
       "bb98d4e9c281b175ea84c517b59308ea"
     ],
-    "smartmanagement": [
+    "smartmanagement"=> [
       "af03af10d57b7b17f26a0130562d6b6e"
     ]
   }
@@ -80,15 +80,15 @@ class SubMergerTest < Minitest::Test
   }
 
   DUMMY_STOP_EXPECTED_SUB = {
-    "rhel": [
+    "rhel"=> [
       "d2e16e6ef52a45b7468f1da56bba1953",
       "e78f5438b48b39bcbdea61b73679449d",
       "a98931d104a7fb8f30450547d97e7ca5"
     ],
-    "els": [
+    "els"=> [
       "7f9a983a540e00931a69382161bdd265"
     ],
-    "smartmanagement": [
+    "smartmanagement"=> [
       "439a7d9b0548adbedcce838e37e84ba1"
     ]
   }
@@ -103,15 +103,15 @@ class SubMergerTest < Minitest::Test
   }
 
   DUMMY_NORMAL_EXPECTED_SUB = {
-    "rhel": [
+    "rhel"=> [
       "d2e16e6ef52a45b7468f1da56bba1953",
       "e78f5438b48b39bcbdea61b73679449d",
       "a98931d104a7fb8f30450547d97e7ca5"
     ],
-    "els": [
+    "els"=> [
       "7f9a983a540e00931a69382161bdd265"
     ],
-    "smartmanagement": [
+    "smartmanagement"=> [
       "439a7d9b0548adbedcce838e37e84ba1"
     ]
   }
