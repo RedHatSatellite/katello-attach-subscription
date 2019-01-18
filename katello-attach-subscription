@@ -1242,7 +1242,7 @@ def vdcupdate()
                     puts "  removed #{sub['id']} - #{sub['cp_id']}"
                     @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
                     puts "  reattached #{sub['id']} - #{sub['cp_id']}"
-                    @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => total_subscriptions}]})
+                    @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => subscriptions_needed}]})
                   else
                     puts "  [noop]: #{sub['id']} - #{sub['cp_id']} would be removed and reattached with correct quantity: #{subscriptions_needed}"
                   end
