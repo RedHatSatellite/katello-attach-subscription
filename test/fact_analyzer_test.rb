@@ -40,6 +40,10 @@ class FactAnalyzerTest < Minitest::Test
     assert_nil KatelloAttachSubscription::FactAnalyzer.system_type_from_facts({})
   end
 
+  def test_system_type_from_facts_nil
+    assert_nil KatelloAttachSubscription::FactAnalyzer.system_type_from_facts(nil)
+  end
+
   def test_system_type_from_facts_virt_host_type_kvm
     assert_equal 'Guest', KatelloAttachSubscription::FactAnalyzer.system_type_from_facts({'virt::host_type' => 'kvm'})
   end
