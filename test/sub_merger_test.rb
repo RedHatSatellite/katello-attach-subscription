@@ -1,16 +1,15 @@
-require 'test_helper'
+require "test_helper"
 
 class SubMergerTest < Minitest::Test
 
   DUMMY_KEEP_PARSE = {
     "type" => "Physical",
-    "host" => {
-      'name' => 'physical_example',
-      'facts' => {
-        "distribution::name" => "Red Hat Server",
-        "distribution::version" => "6.1"
-      }
+    "name" => "physical_example",
+    "facts" => {
+      "distribution::name" => "Red Hat Server",
+      "distribution::version" => "6.1"
     }
+
   }
 
   DUMMY_KEEP_PARSE_EXPECTED_SUB = {
@@ -26,12 +25,10 @@ class SubMergerTest < Minitest::Test
 
   DUMMY_MERGE = {
     "type" => "Physical",
-    "host" => {
-      'name' => 'physical_example',
-      'facts' => {
-        "distribution::name" => "Red Hat Client",
-        "distribution::version" => "5.2"
-      }
+    "name" => "physical_example",
+    "facts" => {
+      "distribution::name" => "Red Hat Client",
+      "distribution::version" => "5.2"
     }
   }
 
@@ -51,11 +48,9 @@ class SubMergerTest < Minitest::Test
 
   DUMMY_OVERRIDE = {
     "type" => "Physical",
-    "host" => {
-      'name' => 'physical_example',
-      'facts' => {
-        "distribution::name" => "Red Hat Client"
-      }
+    "name" => "physical_example",
+    "facts" => {
+      "distribution::name" => "Red Hat Client"
     }
   }
 
@@ -71,11 +66,9 @@ class SubMergerTest < Minitest::Test
 
   DUMMY_STOP = {
     "type" => "Hypervisor",
-    "host" => {
-      'name' => 'physical_example',
-      'facts' => {
-        'hypervisor::cluster' => 'example_cluster'
-      }
+    "name" => "physical_example",
+    "facts" => {
+      "hypervisor::cluster" => "example_cluster"
     }
   }
 
@@ -96,10 +89,8 @@ class SubMergerTest < Minitest::Test
 
   DUMMY_NORMAL = {
     "type" => "Hypervisor",
-    "host" => {
-      'name' => 'physical_example',
-      'facts' => {}
-    }
+    "name" => "physical_example",
+    "facts" => {}
   }
 
   DUMMY_NORMAL_EXPECTED_SUB = {
@@ -118,48 +109,33 @@ class SubMergerTest < Minitest::Test
 
 
   def test_normal_parse
-    yaml = read_yaml_fixture('merge_sub_file')
-    parsed_sub = getSubForHost(yaml['subs'], DUMMY_NORMAL)
+    yaml = read_yaml_fixture("merge_sub_file")
+    parsed_sub = getSubForHost(yaml["subs"], DUMMY_NORMAL)
     assert_equal DUMMY_NORMAL_EXPECTED_SUB, parsed_sub
   end
 
   def test_stop_parse
-    yaml = read_yaml_fixture('merge_sub_file')
-    parsed_sub = getSubForHost(yaml['subs'], DUMMY_STOP)
+    yaml = read_yaml_fixture("merge_sub_file")
+    parsed_sub = getSubForHost(yaml["subs"], DUMMY_STOP)
     assert_equal DUMMY_STOP_EXPECTED_SUB, parsed_sub
   end
 
   def test_overdrive_parse
-    yaml = read_yaml_fixture('merge_sub_file')
-    parsed_sub = getSubForHost(yaml['subs'], DUMMY_OVERRIDE)
+    yaml = read_yaml_fixture("merge_sub_file")
+    parsed_sub = getSubForHost(yaml["subs"], DUMMY_OVERRIDE)
     assert_equal DUMMY_OVERRIDE_EXPECTED_SUB, parsed_sub
   end
 
   def test_merge_parse
-    yaml = read_yaml_fixture('merge_sub_file')
-    parsed_sub = getSubForHost(yaml['subs'], DUMMY_MERGE)
+    yaml = read_yaml_fixture("merge_sub_file")
+    parsed_sub = getSubForHost(yaml["subs"], DUMMY_MERGE)
     assert_equal DUMMY_MERGE_EXPECTED_SUB, parsed_sub
   end
 
   def test_keep_parse
-    yaml = read_yaml_fixture('merge_sub_file')
-    parsed_sub = getSubForHost(yaml['subs'], DUMMY_KEEP_PARSE)
+    yaml = read_yaml_fixture("merge_sub_file")
+    parsed_sub = getSubForHost(yaml["subs"], DUMMY_KEEP_PARSE)
     assert_equal DUMMY_KEEP_PARSE_EXPECTED_SUB, parsed_sub
-  end
-
-  def getSubForHost(subs, host)
-    parsed_final = nil
-    subs.each do |single_sub|
-      parsed = single_sub['parsed_sub']
-      if KatelloAttachSubscription::HostMatcher.match_host(host, single_sub)
-        layer_command = single_sub['sub_layer'] || 'stop_parsing'
-        parsed_final = KatelloAttachSubscription::Utils.merge_subs(parsed_final, parsed, layer_command)
-        if layer_command == 'stop_parsing'
-          break
-        end
-      end
-    end
-    return parsed_final.clone
   end
 
 end

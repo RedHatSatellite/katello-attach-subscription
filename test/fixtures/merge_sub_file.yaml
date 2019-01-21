@@ -2,7 +2,6 @@ subs:
 -
   hostname: .*
   type: Hypervisor
-  skip_density: true
   facts:
     -
       name: hypervisor::cluster
@@ -10,12 +9,12 @@ subs:
       matcher: regexp
   sub:
     rhel:
-      - name = "Red Hat Enterprise Linux for Virtual Datacenters, Premium"
-      - name = "Red Hat Enterprise Linux for Virtual Datacenters, Standard"
+      - name: "Red Hat Enterprise Linux for Virtual Datacenters, Premium"
+      - name: "Red Hat Enterprise Linux for Virtual Datacenters, Standard"
     els:
-      - name = "Red Hat Enterprise Linux Extended Life Cycle Support (Unlimited Guests)"
+      - name: "Red Hat Enterprise Linux Extended Life Cycle Support (Unlimited Guests)"
     smartmanagement:
-      - name = "Smart Management for Unlimited Guests"
+      - name: "Smart Management for Unlimited Guests"
   sub_parsed:
     rhel:
       - d2e16e6ef52a45b7468f1da56bba1953
@@ -30,12 +29,12 @@ subs:
   type: Hypervisor
   sub:
     rhel:
-      - name = "Red Hat Enterprise Linux for Virtual Datacenters, Premium"
-      - name = "Red Hat Enterprise Linux for Virtual Datacenters, Standard"
+      - name: "Red Hat Enterprise Linux for Virtual Datacenters, Premium"
+      - name: "Red Hat Enterprise Linux for Virtual Datacenters, Standard"
     els:
-      - name = "Red Hat Enterprise Linux Extended Life Cycle Support (Unlimited Guests)"
+      - name: "Red Hat Enterprise Linux Extended Life Cycle Support (Unlimited Guests)"
     smartmanagement:
-      - name = "Smart Management for Unlimited Guests"
+      - name: "Smart Management for Unlimited Guests"
   sub_parsed:
     rhel:
       - d2e16e6ef52a45b7468f1da56bba1953
@@ -56,10 +55,10 @@ subs:
       matcher: regexp
   sub:
     rhel:
-      - name = "Red Hat Enterprise Linux Server, Standard (Physical or Virtual Nodes)"
-      - name = "Red Hat Enterprise Linux Server, Premium (Physical or Virtual Nodes)"
+      - name: "Red Hat Enterprise Linux Server, Standard (Physical or Virtual Nodes)"
+      - name: "Red Hat Enterprise Linux Server, Premium (Physical or Virtual Nodes)"
     smartmanagement:
-      - name = "Smart Management"
+      - name: "Smart Management"
   sub_parsed:
     rhel:
       - b1a5d251fa4fe598cb947ffc42b9cbed
@@ -81,7 +80,7 @@ subs:
       matcher: version
   sub:
     els:
-      - name = "Red Hat Enterprise Linux Extended Life Cycle Support (Physical or Virtual Nodes)"
+      - name: "Red Hat Enterprise Linux Extended Life Cycle Support (Physical or Virtual Nodes)"
   sub_parsed:
     els:
       - 523af537946b79c4f8369ed39ba78605
@@ -96,9 +95,9 @@ subs:
       matcher: regexp
   sub:
     rhel:
-      - name = "Red Hat Enterprise Linux Server for HPC Compute Node, Self-support (1-2 sockets) (Up to 1 guest)"
+      - name: "Red Hat Enterprise Linux Server for HPC Compute Node, Self-support (1-2 sockets) (Up to 1 guest)"
     smartmanagement:
-      - name = "Smart Management for Red Hat Enterprise Linux Server for HPC Compute Node (Up to 1 guest)"
+      - name: "Smart Management for Red Hat Enterprise Linux Server for HPC Compute Node (Up to 1 guest)"
   sub_parsed:
     rhel:
       - bb98d4e9c281b175ea84c517b59308ea
