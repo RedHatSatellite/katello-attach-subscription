@@ -27,7 +27,7 @@ class SubMergerTest < Minitest::Test
     "type" => "Physical",
     "name" => "physical_example",
     "facts" => {
-      "distribution::name" => "Red Hat Client",
+      "distribution::name" => "Red Hat Server",
       "distribution::version" => "5.2"
     }
   }
