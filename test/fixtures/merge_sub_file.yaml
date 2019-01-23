@@ -2,9 +2,9 @@ subs:
 -
   hostname: .*
   type: Hypervisor
-  match:
+  facts:
     -
-      fact: hypervisor::cluster
+      name: hypervisor::cluster
       value: example_cluster
       matcher: regexp
   sub:
@@ -48,9 +48,9 @@ subs:
   hostname: .*
   type: Physical
   sub_layer: keep_parsing
-  match:
+  facts:
     -
-      fact: distribution::name
+      name: distribution::name
       value: Server
       matcher: regexp
   sub:
@@ -69,13 +69,13 @@ subs:
   hostname: .*
   type: Physical
   sub_layer: keep_parsing
-  match:
+  facts:
     -
-      fact: distribution::name
+      name: distribution::name
       value: Server
       matcher: regexp
     -
-      fact: distribution::version
+      name: distribution::version
       value: <6.0
       matcher: version
   sub:
@@ -88,9 +88,9 @@ subs:
   hostname: .*
   type: Physical
   sub_layer: override
-  match:
+  facts:
     -
-      fact: distribution::name
+      name: distribution::name
       value: Client|Workstation
       matcher: regexp
   sub:

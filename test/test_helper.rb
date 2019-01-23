@@ -13,7 +13,7 @@ def read_yaml_fixture(file)
   YAML.load_file(yaml)
 end
 
-def getSubForHost(subs, host)
+def get_sub_for_host(subs, host)
   parsed_final = nil
   subs.each do |single_sub|
     parsed = single_sub['sub_parsed']
