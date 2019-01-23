@@ -1100,11 +1100,15 @@ def vdcupdate()
         puts " DEBUG: System '#{system['name']}' in scope, proceeding with assignment of variables"
       end
       # set the desidered subscription to be associated
+      sub_layer = sub['sub_layer'] || "stop_parsing"
+      if @options[:debug]
+        puts " DEBUG: Sub Layer of this sub entry: #{sub_layer}"
+      end
       if sub.has_key?('sub_parsed')
         if has_derived_sub
-          desired_sub_hash = derived_sub
+          desired_sub_hash = KatelloAttachSubscription::Utils.merge_subs(desired_sub_hash, derived_sub, sub_layer)
         else
-          desired_sub_hash = sub['sub_parsed']
+          desired_sub_hash = KatelloAttachSubscription::Utils.merge_subs(desired_sub_hash, sub['sub_parsed'], sub_layer)
         end
       end
       # if "remove_other" has been set, set the flag
@@ -1128,8 +1132,10 @@ def vdcupdate()
         keep_virt_only = sub['keep_virt_only']
       end
 
-      # if the system is found, stop cyclyng over yaml,
-      break
+      # if the system is found and sub_layer is "stop_parsing", stop cyclyng over yaml
+      if sub_layer == "stop_parsing"
+        break
+      end
 
     end
     if skip_host
