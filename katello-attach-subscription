@@ -837,11 +837,7 @@ def vdcupdate()
     end
     system_details[system['name']]=sys
     # check if the type requested match the host one
-    if sys.has_key?('facts')
-      system_type = KatelloAttachSubscription::FactAnalyzer.system_type(sys, sys['facts'])
-    else
-      system_type = KatelloAttachSubscription::FactAnalyzer.system_type_from_host(sys)
-    end
+    system_type = KatelloAttachSubscription::FactAnalyzer.system_type(sys)
     # for each item in yaml extract sub
     if @options[:debug]
       puts " DEBUG: YAML dump with all definitions for the current system"
@@ -906,17 +902,8 @@ def vdcupdate()
       if @options[:verbose]
         puts "VERBOSE: Start testing facts value for #{sys['name']}"
       end
-
-      if sub.has_key?('facts')
-        fact_test_passed = KatelloAttachSubscription::HostMatcher.match_host(sys, sub)
-      else
-        if @options[:verbose]
-          puts "  VERBOSE: Fact test passed as no test on it"
-        end
-        fact_test_passed = true
-      end
+      fact_test_passed = KatelloAttachSubscription::HostMatcher.match_host(sys, sub)
       unless fact_test_passed
-
         if @options[:verbose]
           puts "  VERBOSE: Host #{sys['name']} doesn't pass facts test. Skip to the next sub entry."
         end
