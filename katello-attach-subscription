@@ -213,7 +213,7 @@ end
 @detailed_report = []
 
 # INSTANCE_MULTIPLIER WORKAROUND (BZ 1664614 - https://bugzilla.redhat.com/show_bug.cgi?id=1664614)
-# full explanation of the bug and workaround searching for "I[underscore]MW in this script"
+# full explanation of the bug and workaround in the readme
 # list of the sub that has instance_multiplier that had to be 2
 @exception_sub = [
   "Red Hat Enterprise Linux Server, Standard (Physical or Virtual Nodes)",
@@ -1205,31 +1205,6 @@ def vdcupdate()
             system_socket = sys_socket
             # retrieving instance_multiplier from sub details
             instance_multiplier = sub['instance_multiplier']
-            # I_MW - INSTANCE_MULTIPLIER WORKAROUND (BZ 1664614 - https://bugzilla.redhat.com/show_bug.cgi?id=1664614)
-            # WARNING: due to BZ 1664614, we had to do manual check of the sub to attach in order to calculate the correct value to assign at instance_multiplier.
-            # Description of problem: the output provided calling this 2 API Functions:
-            #   - GET /katello/api/organizations/:organization_id/subscriptions/:id
-            #   - GET /katello/api/subscriptions/:id
-            # has instance_multiplier value always setted to 1.
-            # This is not correct as subscription as RHEL Premium for Physical or Virtual Nodes requires to be attached with a quantity that is multiple of 2. The correct value is retrieved by calling GET /katello/api/organizations/:organization_id/subscriptions API passing as parameters:
-            # - :available_for='host'
-            # - :host_id=<the id of the host we need to attach>
-            # ======
-            # we make test with all the type of hosts and subs that are touched by katello-attach-subscription and we notice that:
-            # this subs has 1 as instance_multiplier
-            # VDC Subs (VDC RHEL, VDC ESL and VDC Smart Management) to attach on an Hypervisor
-            # VDC Subs to attach on a virtual server that is on Fully Entitled Hypervisor
-            # Self-support sub for physical or virtual nodes as "Red Hat Enterprise Linux Server Entry Level, Self-support", "Red Hat Enterprise Linux Server for HPC Compute Node, Self-support (1-2 sockets) (Up to 1 guest)" and "Smart Management for Red Hat Enterprise Linux Server for HPC Compute Node (Up to 1 guest)"
-            # ======
-            # instead, the sub that has 2 as instance_multiplier are for Physical and Virtual Guests that had available this sub to attach
-            # - "Red Hat Enterprise Linux Server, Standard (Physical or Virtual Nodes)"
-            # - "Red Hat Enterprise Linux Server, Premium (Physical or Virtual Nodes)"
-            # - "Smart Management"
-            # - "Red Hat Enterprise Linux Extended Life Cycle Support (Physical or Virtual Nodes)"
-            # ======
-            # so for workaround we are going to check if the host is a Physical and need to attach one of the exception subs
-            # as, from our conclusion, only Physical servers may need instance_multiplier 2.
-            # Hypervisor's sub has instance_multiplier set to 1 and Virtual Guest need only *1* sub (fixed value)
 
             # if the host is a Virtual Guests the total_subscriptions to attach are fixed to 1
             if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST
@@ -1378,7 +1353,7 @@ def vdcupdate()
                 # retrieving instance_multiplier from sub details
                 instance_multiplier = subs[desired_sub]['instance_multiplier']
                 # INSTANCE_MULTIPLIER WORKAROUND (BZ 1664614 - https://bugzilla.redhat.com/show_bug.cgi?id=1664614)
-                # full explanation of the bug and workaround searching for "I[underscore]MW in this script"
+                # full explanation of the bug and workaround in readme
                 # check if the host is physical and need to attach one of the sub present in the exception subscriptions list.
                 if system_type == KatelloAttachSubscription::FactAnalyzer::PHYSICAL and @exception_sub.include?(subs[desired_sub]['name'])
                   # if so, sub is like RHEL Standard for Physical or Virtual nodes, that need instance_multiplier setted to 2
@@ -1467,7 +1442,7 @@ def vdcupdate()
                 # retrieving instance_multiplier from sub details
                 instance_multiplier = missing_hash['instance_multiplier']
                 # INSTANCE_MULTIPLIER WORKAROUND (BZ 1664614 - https://bugzilla.redhat.com/show_bug.cgi?id=1664614)
-                # full explanation of the bug and workaround searching for "I[underscore]MW in this script"
+                # full explanation of the bug and workaround in readme
                 # check if the host is physical and the sub to attach isn't in the exception sub list.
                 if system_type == KatelloAttachSubscription::FactAnalyzer::PHYSICAL and @exception_sub.include?(missing_hash['name'])
                   # if so, sub is like RHEL Standard for Physical or Virtual nodes, that need instance_multiplier setted to 2
