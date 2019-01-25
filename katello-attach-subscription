@@ -212,6 +212,7 @@ end
 # array with all the subs consumed by all the hosts
 @detailed_report = []
 
+
 # INSTANCE_MULTIPLIER WORKAROUND (BZ 1664614 - https://bugzilla.redhat.com/show_bug.cgi?id=1664614)
 # full explanation of the bug and workaround in the readme
 # list of the sub that has instance_multiplier that had to be 2
@@ -1103,11 +1104,15 @@ def vdcupdate()
         puts " DEBUG: System '#{system['name']}' in scope, proceeding with assignment of variables"
       end
       # set the desidered subscription to be associated
+      sub_layer = sub['sub_layer'] || "stop_parsing"
+      if @options[:debug]
+        puts " DEBUG: Sub Layer of this sub entry: #{sub_layer}"
+      end
       if sub.has_key?('sub_parsed')
         if has_derived_sub
-          desired_sub_hash = derived_sub
+          desired_sub_hash = KatelloAttachSubscription::Utils.merge_subs(desired_sub_hash, derived_sub, sub_layer)
         else
-          desired_sub_hash = sub['sub_parsed']
+          desired_sub_hash = KatelloAttachSubscription::Utils.merge_subs(desired_sub_hash, sub['sub_parsed'], sub_layer)
         end
       end
       # if "remove_other" has been set, set the flag
@@ -1131,8 +1136,10 @@ def vdcupdate()
         keep_virt_only = sub['keep_virt_only']
       end
 
-      # if the system is found, stop cyclyng over yaml,
-      break
+      # if the system is found and sub_layer is "stop_parsing", stop cyclyng over yaml
+      if sub_layer == "stop_parsing"
+        break
+      end
 
     end
     if skip_host
@@ -1241,37 +1248,32 @@ def vdcupdate()
                 end
               end
             end
-            # check sub needed < 0, clean and attach
             if not has_derived_sub
-              if subscriptions_needed < 0
-                puts "  WARNING: Subscription #{sub['id']} attached #{sub['quantity_consumed']} that is > of quantity needed: #{subscriptions_needed}, remove and reattach"
-                if not @options[:noop]
-                  # currently seems not working as a bug, uncomment change the code lines for a temporary workaround
-                  @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
-                  @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => total_subscriptions}]})
-                  # @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => subscriptions_needed}]})
-                  puts "    Added #{subscriptions_needed} more subscriptions of #{sub['id']} to #{system['name']}"
-                else
-                  puts "  [noop]: #{sub['id']} - #{sub['cp_id']} would be removed"
-                end
-                subscriptions_needed = total_subscriptions
-              end
+              # check sub needed = 0
               if subscriptions_needed == 0
                 puts "  subscription #{sub['cp_id']} for #{product} product is already attached to #{system['name']}"
               else
-                puts "  subscription #{sub['cp_id']} for #{product} product is attached to #{system['name']}, but still need #{subscriptions_needed} sub"
+                # if subscriptions_needed != 0 then attached sub to the host consumed_quantity is < or > of the correct one.
+                if subscriptions_needed < 0
+                  puts "  WARNING: Subscription #{sub['id']} attached #{sub['quantity_consumed']} that is > of quantity needed: #{total_subscriptions}, sub would be removed and reattached"
+                else
+                  puts "  subscription #{sub['cp_id']} for #{product} product is attached to #{system['name']}, but still need to consume #{subscriptions_needed} token, sub would be removed and reattached"
+                end
+                # check if sub available sub are >= of the one needed as
+                # - if sub_needed > 0 then we need to see if (qty attached + qty to attach) < qty available
                 if sub['available'] >= subscriptions_needed
+                  # set subscriptions_needed to the total ones as current sub is to be removed and reattached consuming total_subscriptions sub.
+                  subscriptions_needed = total_subscriptions
                   if not @options[:noop]
-                    # currently seems not working as a bug, uncomment change the code lines for a temporary workaround
+                    puts "  removed #{sub['id']} - #{sub['cp_id']}"
                     @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
-                    @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => total_subscriptions}]})
-                    # @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => subscriptions_needed}]})
-                    puts "    Added #{subscriptions_needed} more subscriptions of #{sub['id']} to #{system['name']}"
+                    puts "  reattached #{sub['id']} - #{sub['cp_id']}"
+                    @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => subscriptions_needed}]})
                   else
-                    puts "    [noop]: Would be added #{subscriptions_needed} more subscriptions of #{sub['id']} to #{system['name']}"
+                    puts "  [noop]: #{sub['id']} - #{sub['cp_id']} would be removed and reattached with correct quantity: #{subscriptions_needed}"
                   end
                 else
-                  puts " Skipping attaching the remaining subscription of #{sub['id']} for #{system['name']} because #{subscriptions_needed} requested but #{sub['available']} available"
+                  puts " Skipping fixing the subscription of #{sub['id']} for #{system['name']} because #{subscriptions_needed} requested but #{sub['available']} available"
                 end
               end
             end
@@ -1587,10 +1589,42 @@ def printsubsreport()
   end
   CSV.open(@options[:subreportfile], "wb", {:col_sep => ";"}) do |csv|
     # header of csv
-    csv << ["Subscription Name","Expected Quantity","Quantity Available","Quantity Consumed","Quantity Free"]
+    csv << ["Subscription Name","Expected Entitlement","Entitlement Available","Entitlement Consumed","Entitlement Free", "State"]
     @subs_count.each do |sub_name, sub_count|
       sub_hash = getsubdetailfor(sub_name)
-      csv << [sub_name, sub_count, sub_hash["available"], sub_hash["consumed"], sub_hash["free"]]
+      count_state = "OK"
+      if sub_count.to_i > sub_hash["available"].to_i
+        count_state = "ERROR"
+      end
+      csv << [sub_name, sub_count, sub_hash["available"], sub_hash["consumed"], sub_hash["free"], count_state]
+    end
+
+    csv << [""]
+    csv << [""]
+
+    csv << ["Subscription Name", "Instance Multiplier", "Expected Subscription", "Subscription Available", "Subscription Consumed", "Subscription Free", "State"]
+    @subs_count.each do |sub_name, sub_count|
+      sub_hash = getsubdetailfor(sub_name)
+      count_state = "OK"
+      instance_multiplier = 1
+      if @exception_sub.include?(sub_name)
+        instance_multiplier = 2
+      end
+      sub_count = (sub_count.to_f/instance_multiplier.to_f).ceil
+      sub_available = (sub_hash["available"].to_f/instance_multiplier.to_f).ceil
+      sub_consumed = (sub_hash["consumed"].to_f/instance_multiplier.to_f).ceil
+      sub_free = sub_available - sub_consumed
+      if sub_count > sub_available
+        count_state = "ERROR"
+      end
+      csv << [sub_name, instance_multiplier, sub_count, sub_available, sub_consumed, sub_free, count_state]
+    end
+  end
+  CSV.open(@options[:detailedsubreportfile], "wb", {:col_sep => ";"}) do |csv|
+    # header of csv
+    csv << ["Server Name", "Expected Subscription", "Expected Quantity", "Type"]
+    @detailed_report.each do |sub_entry|
+      csv << [sub_entry["hostname"], sub_entry["subname"], sub_entry["quantity"], sub_entry["type"]]
     end
   end
   CSV.open(@options[:detailedsubreportfile], "wb", {:col_sep => ";"}) do |csv|
