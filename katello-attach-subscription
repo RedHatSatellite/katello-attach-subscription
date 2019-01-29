@@ -212,6 +212,10 @@ end
 # array with all the subs consumed by all the hosts
 @detailed_report = []
 
+
+# INSTANCE_MULTIPLIER WORKAROUND (BZ 1664614 - https://bugzilla.redhat.com/show_bug.cgi?id=1664614)
+# full explanation of the bug and workaround in the readme
+# list of the sub that has instance_multiplier that had to be 2
 @exception_sub = [
   "Red Hat Enterprise Linux Server, Standard (Physical or Virtual Nodes)",
   "Red Hat Enterprise Linux Server, Premium (Physical or Virtual Nodes)",
@@ -1206,13 +1210,22 @@ def vdcupdate()
               sockets_limit = 1
             end
             system_socket = sys_socket
+            # retrieving instance_multiplier from sub details
+            instance_multiplier = sub['instance_multiplier']
+
+            # if the host is a Virtual Guests the total_subscriptions to attach are fixed to 1
             if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST
               total_subscriptions = 1
               if @options[:verbose]
                 puts "    VERBOSE: Host #{system['name']} is a guest, total subscriptions needed setted to 1"
               end
             else
-              total_subscriptions = (system_socket.to_f/sockets_limit.to_f).ceil
+              # check if the host is physical and need to attach one of the sub present in the exception subscriptions list.
+              if system_type == KatelloAttachSubscription::FactAnalyzer::PHYSICAL and @exception_sub.include?(sub['name'])
+                # if so, sub is like RHEL Standard for Physical or Virtual nodes, that need instance_multiplier setted to 2
+                instance_multiplier = 2
+              end
+              total_subscriptions = instance_multiplier * (system_socket.to_f/sockets_limit.to_f).ceil
             end
             puts "  #{system['name']} need #{total_subscriptions} subscriptions for sub #{sub['id']}"
             subscriptions_needed = total_subscriptions - sub['quantity_consumed'].to_i
@@ -1339,7 +1352,16 @@ def vdcupdate()
                   puts "    VERBOSE: Host #{system['name']} is a guest, desired_quantity for #{subs[desired_sub]['cp_id']} setted to 1"
                 end
               else
-                desired_quantity = (system_socket.to_f/sub_socket.to_f).ceil
+                # retrieving instance_multiplier from sub details
+                instance_multiplier = subs[desired_sub]['instance_multiplier']
+                # INSTANCE_MULTIPLIER WORKAROUND (BZ 1664614 - https://bugzilla.redhat.com/show_bug.cgi?id=1664614)
+                # full explanation of the bug and workaround in readme
+                # check if the host is physical and need to attach one of the sub present in the exception subscriptions list.
+                if system_type == KatelloAttachSubscription::FactAnalyzer::PHYSICAL and @exception_sub.include?(subs[desired_sub]['name'])
+                  # if so, sub is like RHEL Standard for Physical or Virtual nodes, that need instance_multiplier setted to 2
+                  instance_multiplier = 2
+                end
+                desired_quantity = instance_multiplier * (system_socket.to_f/sub_socket.to_f).ceil
               end
             else
               if @options[:debug]
@@ -1419,7 +1441,16 @@ def vdcupdate()
                   puts "      DEBUG: #{system['name']} is a guest, desired_quantity setted to 1"
                 end
               else
-                desired_quantity = (sys_socket.to_f/sub_socket.to_f).ceil
+                # retrieving instance_multiplier from sub details
+                instance_multiplier = missing_hash['instance_multiplier']
+                # INSTANCE_MULTIPLIER WORKAROUND (BZ 1664614 - https://bugzilla.redhat.com/show_bug.cgi?id=1664614)
+                # full explanation of the bug and workaround in readme
+                # check if the host is physical and the sub to attach isn't in the exception sub list.
+                if system_type == KatelloAttachSubscription::FactAnalyzer::PHYSICAL and @exception_sub.include?(missing_hash['name'])
+                  # if so, sub is like RHEL Standard for Physical or Virtual nodes, that need instance_multiplier setted to 2
+                  instance_multiplier = 2
+                end
+                desired_quantity = instance_multiplier * (sys_socket.to_f/sub_socket.to_f).ceil
               end
               if @options[:debug]
                 puts "      DEBUG: Added #{desired_quantity} of #{missing_hash['name']} (#{missing_hash['name']}) for #{system['name']}"
