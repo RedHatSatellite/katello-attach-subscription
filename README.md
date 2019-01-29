@@ -103,16 +103,16 @@ Due to this bug, we had to do a manual check of the subscription to attach on th
 
 **Description of problem:**
 
-Output provided by this 2 Satellite API Functions:
+Output provided by this 2 Satellite API calls:
 
 ```
 GET /katello/api/organizations/:organization_id/subscriptions/:id
 GET /katello/api/subscriptions/:id
 ```
 
-return `instance_multiplier` with value always setted to **1**.
+return `instance_multiplier` with value always set to **1**.
 
-This is incorrect as subscription like *RHEL Premium for Physical or Virtual Nodes* requires to be attached with a quantity that is multiple of **2**.
+This is incorrect as subscriptions like *RHEL Premium for Physical or Virtual Nodes* requires to be attached with a quantity that is multiple of **2**.
 
 The correct value is retrieved by calling ```GET /katello/api/organizations/:organization_id/subscriptions``` API passing as parameters:
 
@@ -121,15 +121,15 @@ The correct value is retrieved by calling ```GET /katello/api/organizations/:org
 :host_id = <the id of the host we need to attach>
 ```
 
-Tests that was maded using various type of subscriptions and return that:
+Tests that were made using various type of subscriptions and return that:
 
-**A.** This subs has 1 as instance_multiplier
+**A.** These subs has 1 as `instance_multiplier`
 
   - VDC Subs (VDC RHEL, VDC ESL and VDC Smart Management) that would be attached on an Hypervisor
   - VDC Subs that would be attached on a virtual server that is on Fully Entitled Hypervisor
   - Self-support subscriptions for physical or virtual nodes as *"Red Hat Enterprise Linux Server Entry Level, Self-support"*, *"Red Hat Enterprise Linux Server for HPC Compute Node, Self-support (1-2 sockets) (Up to 1 guest)"* and *"Smart Management for Red Hat Enterprise Linux Server for HPC Compute Node (Up to 1 guest)"*
 
-**B.** This subs has 2 as instance_multiplier:
+**B.** These subs has 2 as `instance_multiplier`:
 
 - *"Red Hat Enterprise Linux Server, Standard (Physical or Virtual Nodes)"*
 - *"Red Hat Enterprise Linux Server, Premium (Physical or Virtual Nodes)"*
