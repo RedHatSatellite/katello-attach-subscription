@@ -9,7 +9,7 @@ module KatelloAttachSubscription
         end
         self.search_args(args)
       elsif search.is_a?(Array)
-        search.compact.join(' and ')
+        search.compact.map {|item| item.is_a?(Hash) ? self.search_args(item) : item }.join(' and ')
       else
         search
       end
