@@ -59,7 +59,8 @@ $stdout.sync = true
   :sleepAPI              => false,
   :sleepTime             => 0,
   :sleepMult             => 1,
-  :multisearch           => false
+  :multisearch           => false,
+  :clean_sub             => false
 }
 
 @options = {
@@ -130,6 +131,10 @@ optparse = OptionParser.new do |opts|
 
   opts.on("--multiple-search", "Allow to search content-hosts with the order of query result in yaml configuration file") do
     @options[:multisearch] = true
+  end
+
+  opts.on("--clean-same-product", "Ensure that all the content hosts has 1 subscriptions for every product found from yaml configuration file") do
+    @options[:clean_sub] = true
   end
 
   opts.on("--repeat-API", "Allow to repeat API for a certain number before fail") do
@@ -1151,6 +1156,11 @@ def subsupdate()
         desired_sub_hash = {'none' => []}
       end
 
+      if @options[:clean_sub]
+        cleanable_sub = apiCall(:host_subscriptions, :index, {:organization_id => @options[:org], :host_id => system['id'], :per_page => 100}, false )
+        clean_same_product(desired_sub_hash, cleanable_sub["results"], system, system_type, sys_socket)
+      end
+
       if @options[:debug]
         puts " DEBUG: Checking subscription for #{system['name']} (#{system['id']})"
       end
@@ -1441,6 +1451,47 @@ def hypervisor_has_guests(hostdata)
     has_guests = false
   end
   return has_guests
+end
+
+# clean attached subs of the same products from a content-hosts
+def clean_same_product (desired_sub_hash, host_subscriptions, host, host_type, host_socket)
+  desired_sub_hash.each do |product, desired_product_sub_array|
+    puts "Start checking if there are multiple #{product} subscriptions attached to #{host["name"]}"
+    remove_subscription = []
+    fit_subscription = nil
+    host_subscriptions.each do |single_sub|
+      # puts "DEBUGGONE DESIRED_SUB: #{desired_product_sub_array} - CP_ID: #{single_sub["cp_id"]}"
+      sub_count = desired_product_sub_array.count(single_sub["cp_id"]).to_i
+      if single_sub["type"] == "STACK_DERIVED" or sub_count <= 0
+        next
+      end
+      if not fit_subscription
+        needed_entitlement = KatelloAttachSubscription::Utils.needed_entitlement(host_type, host_socket, single_sub)
+        attached_entitlement = single_sub["quantity_consumed"]
+        if needed_entitlement >= attached_entitlement
+          fit_subscription = single_sub["cp_id"]
+        else
+          remove_subscription.push(single_sub["id"])
+        end
+      else
+        remove_subscription.push(single_sub["id"])
+      end
+    end
+    puts "#{product} subscriptions that will be removed"
+    p remove_subscription
+    remove_subscription.each do |subscription|
+      if not @options[:noop]
+        apiCall(:host_subscriptions, :remove_subscriptions, {:host_id => host['id'], :subscriptions => [{:id => subscription}]}, false )
+        if not @api_error
+          puts "  removed subscription ID #{subscription}"
+        else
+          puts "  WARNING: Problem removing subscription ID #{subscription} from host #{host['name']} - ID #{host['id']}"
+        end
+      else
+        puts "  [noop] removed subscriptions ID #{subscription}"
+      end
+    end
+  end
 end
 
 # add the value of sub passed in sub_quantity to the sub passed in sub_name in subs_count hash
