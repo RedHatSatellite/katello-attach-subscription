@@ -1172,45 +1172,7 @@ def subsupdate()
         req['results'].each do |sub|
           # check if the found cp_id is in the list of the current product, if it is, our job here is done
           if desidered_product_sub_array.include?(sub['cp_id'])
-            sockets_limit = 1
-            # get the sockets limit of the subscription and check if the quantity to attach is correct
-            if @options[:debug]
-              puts "  DEBUG: Checking socket limits of sub #{sub['id']}"
-            end
-            if sub.has_key?('sockets')
-              if sub['sockets'].to_i > 0
-                sockets_limit = sub['sockets'].to_i
-                if @options[:debug]
-                  puts "    DEBUG: Socket limit of sub #{sub['id']} is #{sub['sockets']}"
-                end
-              else
-                puts "FATAL ERROR: The Sockets Limit of subscription #{sub['id']} is not valid"
-                exit 5
-              end
-            else
-              if @options[:debug]
-                puts "    DEBUG: No subscription socket limit specification found. Setting 1 by default"
-              end
-              sockets_limit = 1
-            end
-            system_socket = sys_socket
-            # retrieving instance_multiplier from sub details
-            instance_multiplier = sub['instance_multiplier']
-
-            # if the host is a Virtual Guests the total_subscriptions to attach are fixed to 1
-            if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST
-              total_subscriptions = 1
-              if @options[:verbose]
-                puts "    VERBOSE: Host #{system['name']} is a guest, total subscriptions needed setted to 1"
-              end
-            else
-              # check if the host is physical and need to attach one of the sub present in the exception subscriptions list.
-              if system_type == KatelloAttachSubscription::FactAnalyzer::PHYSICAL and @exception_sub.include?(sub['name'])
-                # if so, sub is like RHEL Standard for Physical or Virtual nodes, that need instance_multiplier setted to 2
-                instance_multiplier = 2
-              end
-              total_subscriptions = instance_multiplier * (system_socket.to_f/sockets_limit.to_f).ceil
-            end
+            total_subscriptions = KatelloAttachSubscription::Utils.needed_entitlement(system_type, sys_socket, sub)
             puts "  #{system['name']} need #{total_subscriptions} subscriptions for sub #{sub['id']}"
             subscriptions_needed = total_subscriptions - sub['quantity_consumed'].to_i
 
@@ -1311,52 +1273,8 @@ def subsupdate()
             if @api_error
               STDERR.puts "  ERROR: Unable to retrive subscription for #{desired_sub}"
             end
-            # Start checking the needed subscriptions for every hosts
-            if not has_derived_sub
-              system_socket = sys_socket
-              puts " Start calculating the correct number of subscriptions #{subs[desired_sub]['id']} needed for #{system['name']}"
-              # if field socket is present, the max sockets managed for every subscription is in sockets field
-              if subs[desired_sub].has_key?('sockets')
-                if subs[desired_sub]['sockets'].to_i > 0
-                  sub_socket = subs[desired_sub]['sockets'].to_i
-                  if @options[:debug]
-                    puts "    DEBUG: Subscription #{subs[desired_sub]['id']} limit of socket is #{sub_socket}"
-                  end
-                else
-                  puts "FATAL ERROR: The limit for the number of sockets of #{subs[desired_sub]['name']} (ID: #{subs[desired_sub]['id']}, CPID: #{subs[desired_sub]['cp_id']}) is invalid"
-                  exit 5
-                end
-              else
-              # if no subscription socket limit data is present use 1 by default
-                if @options[:debug]
-                  puts "    DEBUG: No subscription socket limit specification found. Setting 1 by default"
-                end
-              end
-              # calculate the correct number, eg: if system has 8 sockets but subs grant only 2 sockets, we need 4 subs
-              # ceiling data it's to prevent 0 subs needed if hosts has 1 socket but subs has 2 or more like sockets limit
-              if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST
-                desired_quantity = 1
-                if @options[:verbose]
-                  puts "    VERBOSE: Host #{system['name']} is a guest, desired_quantity for #{subs[desired_sub]['cp_id']} setted to 1"
-                end
-              else
-                # retrieving instance_multiplier from sub details
-                instance_multiplier = subs[desired_sub]['instance_multiplier']
-                # INSTANCE_MULTIPLIER WORKAROUND (BZ 1664614 - https://bugzilla.redhat.com/show_bug.cgi?id=1664614)
-                # full explanation of the bug and workaround in readme
-                # check if the host is physical and need to attach one of the sub present in the exception subscriptions list.
-                if system_type == KatelloAttachSubscription::FactAnalyzer::PHYSICAL and @exception_sub.include?(subs[desired_sub]['name'])
-                  # if so, sub is like RHEL Standard for Physical or Virtual nodes, that need instance_multiplier setted to 2
-                  instance_multiplier = 2
-                end
-                desired_quantity = instance_multiplier * (system_socket.to_f/sub_socket.to_f).ceil
-              end
-            else
-              if @options[:debug]
-                puts "    DEBUG: Host #{system['name']} has Stack_derived subs to be attached, desired quantity set to 0"
-              end
-              desired_quantity = 0
-            end
+
+            desired_quantity = KatelloAttachSubscription::Utils.needed_entitlement(system_type, sys_socket, @subs[desired_sub])
             puts "   The number of subscriptions needed for #{desired_sub} (id: #{subs[desired_sub]['id']}) is of #{desired_quantity}"
 
             # if there are not enough available subscriptions check the next available
@@ -1416,23 +1334,7 @@ def subsupdate()
               end
               missing_hash = subs[sub_missing]
               sub_socket = missing_hash['sockets']
-              if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST
-                desired_quantity = 1
-                if @options[:debug]
-                  puts "      DEBUG: #{system['name']} is a guest, desired_quantity setted to 1"
-                end
-              else
-                # retrieving instance_multiplier from sub details
-                instance_multiplier = missing_hash['instance_multiplier']
-                # INSTANCE_MULTIPLIER WORKAROUND (BZ 1664614 - https://bugzilla.redhat.com/show_bug.cgi?id=1664614)
-                # full explanation of the bug and workaround in readme
-                # check if the host is physical and the sub to attach isn't in the exception sub list.
-                if system_type == KatelloAttachSubscription::FactAnalyzer::PHYSICAL and @exception_sub.include?(missing_hash['name'])
-                  # if so, sub is like RHEL Standard for Physical or Virtual nodes, that need instance_multiplier setted to 2
-                  instance_multiplier = 2
-                end
-                desired_quantity = instance_multiplier * (sys_socket.to_f/sub_socket.to_f).ceil
-              end
+              desired_quantity = KatelloAttachSubscription::Utils.needed_entitlement(system_type, sys_socket, missing_hash)
               if @options[:debug]
                 puts "      DEBUG: Added #{desired_quantity} of #{missing_hash['name']} (#{missing_hash['name']}) for #{system['name']}"
               end
