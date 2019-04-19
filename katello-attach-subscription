@@ -32,28 +32,34 @@ require_relative 'lib/katello_attach_subscription'
 $stdout.sync = true
 
 @defaults = {
-  :noop             => false,
-  :uri              => 'https://localhost/',
-  :timeout          => 300,
-  :user             => 'admin',
-  :pass             => 'changeme',
-  :org              => 1,
-  :usecache         => false,
-  :cachefile        => 'katello-attach-subscription.cache',
-  :virtwho          => false,
-  :virtwhocachefile => 'virt-who.cache',
-  :emptyhypervisor  => false,
-  :debug            => false,
-  :verbose          => false,
-  :search           => nil,
-  :density          => false,
-  :densityfile      => 'cluster-state.csv',
-  :guestreportfile  => 'guest-report.csv',
-  :densityvalue     => 5,
-  :subreport        => false,
-  :subreportfile    => 'sub-report.csv',
+  :noop                  => false,
+  :uri                   => 'https://localhost/',
+  :timeout               => 300,
+  :user                  => 'admin',
+  :pass                  => 'changeme',
+  :org                   => 1,
+  :usecache              => false,
+  :cachefile             => 'katello-attach-subscription.cache',
+  :virtwho               => false,
+  :virtwhocachefile      => 'virt-who.cache',
+  :emptyhypervisor       => false,
+  :debug                 => false,
+  :verbose               => false,
+  :search                => nil,
+  :density               => false,
+  :densityfile           => 'cluster-state.csv',
+  :guestreportfile       => 'guest-report.csv',
+  :densityvalue          => 5,
+  :subreport             => false,
+  :subreportfile         => 'sub-report.csv',
   :detailedsubreportfile => 'detailed-report.csv',
-  :verify_ssl       => true
+  :verify_ssl            => true,
+  :repeatAPI             => false,
+  :maxstep               => 1,
+  :sleepAPI              => false,
+  :sleepTime             => 0,
+  :sleepMult             => 1,
+  :multisearch           => false
 }
 
 @options = {
@@ -122,6 +128,20 @@ optparse = OptionParser.new do |opts|
     @options[:subreportfile] = srf
   end
 
+  opts.on("--multiple-search", "Allow to search content-hosts with the order of query result in yaml configuration file") do
+    @options[:multisearch] = true
+  end
+
+  opts.on("--repeat-API", "Allow to repeat API for a certain number before fail") do
+  @options[:repeatAPI] = true
+  end
+  opts.on("--max-step=MAX_STEP", "Set the number of tentative which API try to repeat API Call in case of fails") do |step|
+    @options[:maxstep] = step
+  end
+  opts.on("--repeat-API-sleep", "Allow to add an incremental waiting time configurable via configuration file") do
+    @options[:sleepAPI] = true
+  end
+
   opts.on("-v", "--verbose", "verbose output for the script") do
     @options[:verbose] = true
   end
@@ -171,6 +191,26 @@ if @options[:virtwho]
   end
 end
 
+# if options sleepAPI get the value of
+if @options[:sleepAPI]
+  if @yaml.has_key?(:sleep)
+    if @yaml[:sleep].has_key?(:base)
+      @options[:sleepTime] = @yaml[:sleep][:base]
+    else
+      if @options[:debug]
+        puts " DEBUG: --sleep-API option requested, but :base value not configured in YAML file, using default value"
+      end
+    end
+    if @yaml[:sleep].has_key?(:multiplier)
+      @options[:sleepMult] = @yaml[:sleep][:multiplier]
+    else
+      if @options[:debug]
+        puts " DEBUG: --sleep-API options requested but :multiplier value not configured in YAML file, using default value"
+      end
+    end
+  end
+end
+
 # satellite url has to start with https or PUT will fail with http error
 unless @options[:uri].start_with?('https://')
   abort "FATAL ERROR: the uri must start with https://"
@@ -185,6 +225,9 @@ end
 
 # binding api
 @api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]}, {:verify_ssl => @options[:verify_ssl]})
+
+# error passed trough api call
+@api_error = false
 
 # global variable of the script
 
@@ -444,24 +487,16 @@ def checksubs()
         puts "    VERBOSE: Current hypervisor #{currentcount+1}/#{hypervisors_list.count}: #{system['name']} (#{system['id']})"
       end
       # retrieve full data for every hypervisor found
-      begin
-        sys = @api.resource(:hosts).call(:show, {:id => system['id'], :fields => 'full'})
-        if @options[:virtwho] and @virtwho_data
-          if @options[:verbose]
-            puts "VERBOSE: adding virt-who data to #{sys['name']}"
-          end
-          sys = KatelloAttachSubscription::VirtWhoHelper.merge_system_virtwho(sys, @parsed_hypervisors_hash, @options[:org])
-        end
-        hypervisors_collection.push(sys)
-      rescue RestClient::NotFound
-        STDERR.puts "   ERROR: Hypervisor '#{system['name']}' not found. Skipping."
+      sys = apiCall(:hosts, :show, { :id => system['id'], :fields => 'full' }, false)
+      if @api_error
+        STDERR.puts "  ERROR: Hypervisor '#{system['name']}' not found. Skipping"
         next
-      rescue Exception => e
-        puts "   ERROR: Unknow Error -- Unable to retrieve details for hypervisor #{system['id']} #{system['name']}"
-        puts e.message
-        puts e.backtrace.inspect
-        puts e.response
-        exit 1
+      end
+      if @options[:virtwho] and @virtwho_data
+        if @options[:verbose]
+          puts "VERBOSE: adding virt-who data to #{sys['name']}"
+        end
+        sys = KatelloAttachSubscription::VirtWhoHelper.merge_system_virtwho(sys, @parsed_hypervisors_hash, @options[:org])
       end
     end
     puts "Collecting hypervisor data completed successfully"
@@ -679,21 +714,10 @@ def checksubs()
           next
         end
         # if no guests present, retrieve all subscription data from that hypervisor
-        begin
-          rem_sub_response = @api.resource(:host_subscriptions).call(:index, {:host_id => system['id']})
-          if @options[:debug]
-            puts "   DEBUG: Retrieved subscription data of #{system['name']}"
-            p rem_sub_response
-          end
-        rescue RestClient::NotFound
+        rem_sub_response = apiCall(:host_subscriptions, :index, {:host_id => system['id']}, false)
+        if @api_error
           STDERR.puts "   ERROR: Hypervisor #{system['name']} subscription data not found. Skipping."
           next
-        rescue Exception => e
-          puts "   ERROR: Unknow Error -- Unable to retrieve subscription data for hypervisor #{system['id']} #{system['name']}"
-          puts e.message
-          puts e.backtrace.inspect
-          puts e.response
-          exit 1
         end
         # check if data found (API return data successfully)
         if not rem_sub_response.has_key?("total")
@@ -713,20 +737,15 @@ def checksubs()
               puts "      DEBUG: Current subscription data"
               p rem_sub
             end
-            begin
-              # removing the subscription calling remove_subscriptions API
-              if not @options[:noop]
-                @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => rem_sub['id']}]})
-                puts "      Removed subscription #{rem_sub['id']} from hypervisor #{system['name']} / #{system['id']}"
-              else
-                puts "      [noop]: sub #{rem_sub['id']} would be removed from hypervisor #{system['name']} / #{system['id']}"
+            if not @options[:noop]
+              apiCall(:host_subscriptions, :remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => rem_sub['id']}]}, false )
+              if @api_error
+                puts "      Can't remove subscription #{rem_sub['id']} from hypervisor #{system['name']} / #{system['id']}. Skipping"
+                next
               end
-            rescue Exception => e
-              puts "      ERROR: Unknow Error - Unable to remove subscription #{rem_sub["id"]} from #{system["name"]}"
-              puts e.message
-              puts e.backtrace.inspect
-              puts e.response
-              exit 1
+              puts "      Removed subscription #{rem_sub['id']} from hypervisor #{system['name']} / #{system['id']}"
+            else
+              puts "      [noop]: sub #{rem_sub['id']} would be removed from hypervisor #{system['name']} / #{system['id']}"
             end
           end
         else
@@ -742,7 +761,7 @@ def checksubs()
 end
 
 # main function
-def vdcupdate()
+def subsupdate()
   @default_type = nil
   # initialize variables
   systems = []
@@ -754,39 +773,7 @@ def vdcupdate()
   req = nil
   cachefile = @options[:cachefile].to_s + "_org" + @options[:org].to_s
   # Fill systems array from API of satellite. Check for cache usage.
-  if @options[:usecache]
-    puts "Starting host collection from cache. Please be patient."
-    cachefile = "#{@options[:cachefile]}_org#{@options[:org]}"
-    systems = readfromcache(cachefile, 'systems')
-    system_details = readfromcache(cachefile, 'system_details')
-  else
-    # no cache wanted
-    puts "Starting host collection from API. Please be patient."
-    # checking all of the systems 100 at the time, from page 0 to latest
-    # first of all, search for hypervisor as we would like to subscribe in order hypervisors, physicals and guests
-    # Currently there is a BZ opened as is not possible to absolute search hypervisor, physical and guest (BZ1635861)
-    search_options = KatelloAttachSubscription::Utils.search_args(['hypervisor=true', @options[:search]])
-    puts "Searching for Hypervisors"
-    systems = fetch_all_results(:hosts, :index, {:search => search_options})
-    hypervisor_count = systems.count
-    puts "Completed hypervisor collection."
-    puts "Hypervisors entry: #{hypervisor_count}"
-    # research physical hosts filtering facts.virt::host_type="Not Applicable"
-    search_options = KatelloAttachSubscription::Utils.search_args(['facts.virt::host_type="Not Applicable"', @options[:search]])
-    puts "Searching for Physicals"
-    systems.concat(fetch_all_results(:hosts, :index, {:search => search_options}))
-    physical_count = systems.count
-    puts "Completed physical collection."
-    puts "Physical entry: #{physical_count - hypervisor_count}"
-    # search guests one, filtering facts.virt::is_guest = true
-    search_options = KatelloAttachSubscription::Utils.search_args(['facts.virt::is_guest=true', @options[:search]])
-    puts "Searching for Guests"
-    systems.concat(fetch_all_results(:hosts, :index, {:search => search_options}))
-    virt_count = systems.count
-    puts "Completed guests collection."
-    puts "Hosts Entry: #{virt_count - physical_count}"
-    puts "Total Entry: #{virt_count}"
-  end
+  systems = fetch_all_systems
 
   puts "Starting host subscription assignment"
   systemstotal = systems.count
@@ -824,7 +811,14 @@ def vdcupdate()
       puts " DEBUG: detail of the current system to be checked:"
       p system
     end
-    sys = @api.resource(:hosts).call(:show, {:id => system['id'].to_i, :fields => 'full'})
+
+    sys = apiCall(:hosts, :show, {:id => system['id'].to_i, :fields => 'full'}, false)
+    if @api_error
+      STDERR.puts "   ERROR: Host #{system['name']} full api data not found. Skipping."
+      # next
+      return
+    end
+
     if sys.count <= 0
       puts "  WARNING: System name '#{system['name']}' not found. Is cache in use? Skipping."
       next
@@ -953,21 +947,10 @@ def vdcupdate()
             puts "  Hypervisor #{sys['name']} is in #{this_system_cluster} that isn't in an full cluster. Proced to removing subcription"
             skip_host = true
             # start subscription removing from hypervisor
-            begin
-              rem_sub_response = @api.resource(:host_subscriptions).call(:index, {:host_id => system['id']})
-              if @options[:debug]
-                puts "   DEBUG: Retrieved subscription data of #{system['name']}"
-                p rem_sub_response
-              end
-            rescue RestClient::NotFound
-              STDERR.puts "   ERROR: Hypervisor #{system['name']} subscription data not found. Skipping."
+            rem_sub_response=apiCall(:host_subscriptions, :index, {:host_id => system['id']}, false)
+            if @api_error
+              STDERR.puts "   ERROR: Can't retrieve subscription data for Hypervisor #{system['name']} not found. Skipping"
               next
-            rescue Exception => e
-              puts "   ERROR: Unknow Error -- Unable to retrieve subscription data for hypervisor #{system['id']} #{system['name']}"
-              puts e.message
-              puts e.backtrace.inspect
-              puts e.response
-              exit 1
             end
             if rem_sub_response["total"].to_i > 0
               puts "    Starting removing subscriptions from Hypervisor"
@@ -982,8 +965,12 @@ def vdcupdate()
                 begin
                   # removing the subscription
                   if not @options[:noop]
-                    @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => sys['id'], :subscriptions => [{:id => rem_sub['id']}]})
-                    puts "      Removed subscription #{rem_sub['id']} from hypervisor #{sys['name']} / #{sys['id']}"
+                    apiCall(:host_subscriptions, :remove_subscriptions, {:host_id => sys['id'], :subscriptions => [{:id => rem_sub['id']}]}, false)
+                    if not @api_error
+                      puts "      Removed subscription #{rem_sub['id']} from hypervisor #{sys['name']} / #{sys['id']}"
+                    else
+                      puts "      ERROR: Error while trying to remove subscription #{rem_sub['id']} from hypervisor #{sys['name']} / #{sys['id']}"
+                    end
                   else
                     puts "      [noop]: sub #{rem_sub['id']} would be removed from hypervisor #{sys['name']} / #{sys['id']}"
                   end
@@ -1017,7 +1004,11 @@ def vdcupdate()
           puts "   VERBOSE: System #{system['name']} is a Guest and desire stack-derived sub, search for it"
         end
         subfiltertype = "STACK_DERIVED"
-        attached_sub_response = @api.resource(:host_subscriptions).call(:index, {:organization_id => @options[:org], :host_id => system['id']})
+        attached_sub_response = apiCall(:host_subscriptions, :index, {:organization_id => @options[:org], :host_id => system['id']}, false)
+        if @api_error
+          puts "   ERROR: Unable to retrieve subscription data for host #{system['id']} #{system['name']}. Skipping to next host"
+          next
+        end
         attached_sub_response['results'].each do |attached_sub|
           if attached_sub['type'] == subfiltertype
             if @options[:debug]
@@ -1171,17 +1162,10 @@ def vdcupdate()
         end
         has_desired_sub = false
         # check the current associated subscription to this system
-        begin
-          req = @api.resource(:host_subscriptions).call(:index, {:organization_id => @options[:org], :host_id => system['id'], :per_page => 100})
-        # in case of error adding the subscription, stop the process
-        rescue RestClient::ExceptionWithResponse => e
-          STDERR.puts "  WARNING: Subscription problem -- unable to retrieve subscription for host #{system['id']} #{system['name']}. Message: #{e.response}"
-        rescue Exception => e
-          puts "  ERROR: Unkown Error -- unable to retrieve subscription for host #{system['id']} #{system['name']}"
-          puts e.message
-          puts e.backtrace.inspect
-          puts e.response
-          exit 1
+        req = apiCall(:host_subscriptions, :index, {:organization_id => @options[:org], :host_id => system['id'], :per_page => 100}, false )
+        if @api_error
+          STDERR.puts "  WARNING: Subscription problem -- unable to retrieve subscription for host #{system['id']} #{system['name']}"
+          next
         end
 
         # check a single subscription in the array
@@ -1266,9 +1250,15 @@ def vdcupdate()
                   subscriptions_needed = total_subscriptions
                   if not @options[:noop]
                     puts "  removed #{sub['id']} - #{sub['cp_id']}"
-                    @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
+                    apiCall(:host_subscriptions, :remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]}, false)
+                    if @api_error
+                      STDERR.puts "WARNING: Unable to remove subscription #{sub['id']} from #{system['name']} - ID: #{system['id']}"
+                    end
                     puts "  reattached #{sub['id']} - #{sub['cp_id']}"
-                    @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => subscriptions_needed}]})
+                    apiCall(:host_subscriptions, :add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => subscriptions_needed}]}, false)
+                    if @api_error
+                      STDERR.puts "WARNING: Unable to attach subscription #{sub['id']} to #{system['name']} - ID: #{system['id']}"
+                    end
                   else
                     puts "  [noop]: #{sub['id']} - #{sub['cp_id']} would be removed and reattached with correct quantity: #{subscriptions_needed}"
                   end
@@ -1283,8 +1273,12 @@ def vdcupdate()
           elsif sub['cp_id'] != nil and not desired_sub_hash.flatten(2).include?(sub['cp_id']) and (remove_other or remove_subs.include?(sub['cp_id'])) and not (keep_virt_only and sub.has_key?('virt_only') and sub['virt_only']) and not keep_subs.include?(sub['cp_id'])
             puts "  removing subscription #{sub['cp_id']} from system #{system['name']}"
             if not @options[:noop]
-              @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
-              puts "  removed"
+              apiCall(:host_subscriptions, :remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]}, false)
+              if @api_error
+                STERR.puts "WARNING: Unable to remove subscription #{sub['id']} from #{system['name']} - ID: #{system['id']}"
+              else
+                puts "  removed"
+              end
             else
               puts "  [noop] removed"
             end
@@ -1313,15 +1307,9 @@ def vdcupdate()
               p desired_sub
             end
             # if subs[desired_sub] is false, retrieve the current subscription detail
-            begin
-              # this will retrieve the sub detail only once for each sub
-              subs[desired_sub] ||= @api.resource(:subscriptions).call(:index, {:search => "id=#{desired_sub}", :organization_id => @options[:org]})['results'][0]
-            # in case of error adding the subscription, stop the process
-            rescue Exception => e
-              puts "  ERROR: unable to retrieve subscription #{desired_sub}"
-              puts e.message
-              puts e.backtrace.inspect
-              exit 1
+            @subs[desired_sub] ||= apiCall(:subscriptions, :index, {:search => "id=#{desired_sub}", :organization_id => @options[:org]}, false)['results'][0]
+            if @api_error
+              STDERR.puts "  ERROR: Unable to retrive subscription for #{desired_sub}"
             end
             # Start checking the needed subscriptions for every hosts
             if not has_derived_sub
@@ -1405,19 +1393,12 @@ def vdcupdate()
             subs[desired_sub]['consumed'] += desired_quantity
 
             if not @options[:noop]
-              begin
-                @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => subs[desired_sub]['id'], :quantity => desired_quantity}]})
+              apiCall(:host_subscriptions, :add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => @subs[desired_sub]['id'], :quantity => desired_quantity}]}, false)
+              if @api_error
+                STDERR.puts "  WARNING: Subscription problem -- unable to attach subscription for host #{system['id']} #{system['name']}"
+              else
                 puts "    Added #{desired_sub} for #{product} in system #{system['name']}"
-                # stop cycling over the subscription available since the first available has been added
                 break
-              # in case of error adding the subscription, stop the process
-              rescue RestClient::ExceptionWithResponse => e
-                STDERR.puts "  WARNING: Subscription problem -- unable to attach subscription for host #{system['id']} #{system['name']}. Message: #{e.response}"
-              rescue Exception => e
-                STDERR.puts "  ERROR: unable to attach subscription"
-                STDERR.puts e.message
-                STDERR.puts e.backtrace.inspect
-                exit 1
               end
             else
               puts "    [noop] Added #{desired_sub} for #{product} in system #{system['name']}"
@@ -1642,11 +1623,9 @@ def addspecialsubtocount(system)
   system_id = system['id']
   attached_subscriptions = []
   # retrieve all the subscription attached
-  begin
-    response = @api.resource(:host_subscriptions).call(:index, {:host_id => system_id})
-  rescue Exception => e
+  response = apiCall(:host_subscriptions, :index, {:host_id => system_id}, false)
+  if @api_error
     puts "   ERROR: Unknow Error -- Unable to retrieve subscription details for hypervisor #{system_id}"
-    exit 1
   end
   # check if data found (API return data successfully)
   if not response.has_key?("total")
@@ -1764,6 +1743,38 @@ def getavailablesubfor(parsed_subscription)
   return available_subs
 end
 
+# fetch all the hosts reading from the yaml configuration file, if present
+def fetch_all_systems
+  systems = []
+  cachefile = @options[:cachefile].to_s + "_org" + @options[:org].to_s
+  if @options[:usecache]
+    puts "Starting host collection from cache. Please be patient."
+    cachefile = "#{@options[:cachefile]}_org#{@options[:org]}"
+    systems = readfromcache(cachefile, 'systems')
+  else
+    # no cache wanted
+    puts "Starting host collection from API. Please be patient."
+    # first of all, search for hypervisor as we would like to subscribe in order hypervisors, physicals and guests
+    # Currently there is a BZ opened as is not possible to absolute search hypervisor, physical and guest (BZ1635861)
+    if @options[:multisearch]
+      search_data = @yaml[:search]
+      search_data.each do |search_data|
+        search_options = search_data
+        puts "Searching for Hosts that match #{search_options}"
+        systems.concat(fetch_all_results(:hosts, :index, {:search => search_options}))
+      end
+    else
+      search_options = ""
+      puts "Searching for all Hosts in the environment"
+      systems = fetch_all_results(:hosts, :index, {:search => search_options})
+    end
+    hosts_count = systems.count
+    puts "Completed hosts collection."
+    puts "Hosts entry: #{hosts_count}"
+  end
+  return systems
+end
+
 # call api function to retrieve the list of object passed in resource
 def fetch_all_results(resource, action, params)
   page = 0
@@ -1774,11 +1785,65 @@ def fetch_all_results(resource, action, params)
     page += 1
     # get 100 results
     params.merge!({:organization_id => @options[:org], :page => page, :per_page => 100})
-    req = @api.resource(resource).call(action, params)
+    req = apiCall(resource, action, params, true)
     # concatenate output - all of the results
     results.concat(req['results'])
   end
   return results
+end
+
+# perform an api call checking for error and retry if setted
+def apiCall(resource, action, params, exiting)
+  if not @options[:repeatAPI]
+    @options[:maxstep] = 1
+  end
+  @api_error = true
+  current_step = 0
+  exceptions_list = []
+  results = {}
+  step = 0
+  while @api_error and step <= @options[:maxstep]
+    begin
+      results = @api.resource(resource).call(action, params)
+      @api_error = false
+    rescue RestClient::ExceptionWithResponse => exception
+      @api_error = true
+      step = step + 1
+      exceptions_list.push({"time"=> Time.now, "step" => step, "message" => exception.message, "response" => exception.response })
+      if @options[:debug]
+        puts "DEBUG: API #{resource} / #{action} failes for the #{step} time(s)."
+      end
+      if @options[:sleepAPI]
+        waiting_time = @options[:sleepTime] * ( @options[:sleepMult].to_f ** (step - 1) )
+        if @options[:debug]
+          puts "  DEBUG: waiting #{waiting_time} to repeat API call"
+        end
+        sleep(waiting_time)
+      end
+    end
+  end
+  if @options[:debug] and exceptions_list.count > 0
+    apiCallPrintError(resource, action, params, step, exceptions_list)
+  end
+  if step >= @options[:maxstep] and exiting
+    puts "Exiting from program"
+    exit 1
+  end
+  return results
+end
+
+# print the error of the API call if present
+def apiCallPrintError(resource, action, params, step, exceptions_list)
+  STDERR.puts "###"
+  STDERR.puts "ERROR: API Call failed for #{step} time(s). See error log:"
+  STDERR.puts "API #{resource} / #{action} with this parameters"
+  STDERR.puts params
+  exceptions_list.each do |single_exception|
+    STDERR.puts "---"
+    STDERR.puts "FAIL ##{single_exception["step"].to_i}: #{single_exception["time"]} - #{single_exception["message"]}"
+    STDERR.puts "#{single_exception["response"]}"
+  end
+  STDERR.puts "###"
 end
 
 # read the cache searching for key in file, if cachekey isn't setted read as json cachefile
@@ -1826,4 +1891,4 @@ def readfromJSONcache(jsoncachefile)
 end
 
 checksubs
-vdcupdate
+subsupdate
