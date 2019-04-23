@@ -49,7 +49,9 @@ $stdout.sync = true
   :density               => false,
   :densityfile           => 'cluster-state.csv',
   :guestreportfile       => 'guest-report.csv',
-  :densityvalue          => 5,
+  :densityvalue          => 4,
+  :elsdensityvalue       => 4,
+  :elsosversion          => "<6",
   :subreport             => false,
   :subreportfile         => 'sub-report.csv',
   :detailedsubreportfile => 'detailed-report.csv',
@@ -294,7 +296,6 @@ def checksubs()
   if not cachepresent
     puts "Subscription parsing started. Please be patient."
     subsyamltotalentry = @yaml[:subs].count
-
     @yaml[:subs].each_with_index do |sub, subcurrentcount|
       # search always for NORMAL sub as they could be attached booth hypervisor, physical and guest host
       subfiltertype = "NORMAL"
@@ -334,10 +335,7 @@ def checksubs()
               puts "   VERBOSE: parsing subscription '#{subscription_item}'"
             end
             # fetch all the result searching subscription by their name, stored in subscription_item
-
-            # if subscription_item is an hash search for key = value, either search for the value
             search_options = KatelloAttachSubscription::Utils.search_args(subscription_item)
-
             parsed_subscription = fetch_all_results(:subscriptions,:index,{:search => search_options, :available_for => "host"})
             # if the lookup has given no results at all, no subscriptions has to be added
             if parsed_subscription.empty?
@@ -429,6 +427,7 @@ def checksubs()
     # if run_virtwho_print is true then run virt-who --print
     if run_virtwho_print
       puts "Running the command '#{@virtwho_location} --print' to retrieve Hypervisors data. Please be patient."
+
       # run virt-who --print and send debug output to /dev/null as it's not useful for the script
       virtwho_print_output = `#{@virtwho_location} --print 2>> /dev/null`
       # if extited correctly start to parse the output
@@ -461,6 +460,7 @@ def checksubs()
         puts "FATAL ERROR: something went wrong while running virt-who --print command. Possible fix it's to avoid running virt-who as service"
         exit 5
       end
+
     end
     if @options[:debug]
       puts " DEBUG: the full hypervisor data from JSON output after using virt-who option is:"
@@ -503,6 +503,7 @@ def checksubs()
         end
         sys = KatelloAttachSubscription::VirtWhoHelper.merge_system_virtwho(sys, @parsed_hypervisors_hash, @options[:org])
       end
+      hypervisors_collection.push(sys)
     end
     puts "Collecting hypervisor data completed successfully"
     if @options[:debug]
@@ -558,23 +559,34 @@ def checksubs()
     # loop all the clustered hypervisor
     @clustered_hypervisor_list.each_with_index do |clu_hypervisor, index|
       hname = clu_hypervisor['facts']['hypervisor::cluster']
+      hsocket = 1
+      if clu_hypervisor['facts'].has_key?('cpu::cpu_socket(s)')
+        hsocket = clu_hypervisor['facts']['cpu::cpu_socket(s)'].to_i
+      end
       # if no cluster are already present in ccluster dict, with all the data, create the new entry
       if not ccluster_hash.has_key?(hname)
-        ccluster_hash[hname] = {'hosts' => 0, 'guests' => 0}
+        ccluster_hash[hname] = {'hosts' => 0, 'guests' => 0, 'socket' => 0, 'els_guests' => 0}
       end
       # set the value of hosts and guests found in hypervisor entry
       ccluster_hash[hname]['hosts'] += 1
       ccluster_hash[hname]['guests'] += clu_hypervisor['subscription_facet_attributes']['virtual_guests'].count
-      # append guest of hypervisor to guest report, passing clu_hypervisor as guests are present in subscription_facet_attributes dict
-      if @options[:subreport]
-        collectguestdata(clu_hypervisor)
+      ccluster_hash[hname]['socket'] += hsocket
+      # getting guests data of the hypervisor searching for els
+      search_options = "hypervisor_host=virt-who-#{clu_hypervisor['name']}-#{@options[:org]} and organization_id=#{@options[:org]}"
+      guests_lists = fetch_all_results(:hosts, :index, {:search => search_options})
+      # looping to check which guests need ELS
+      guests_lists.each do |single_guest|
+        single_guest_os = single_guest['operatingsystem_name'].gsub(/[^\d.]/,'')
+        if KatelloAttachSubscription::HostMatcher.match_version(@options[:elsosversion], single_guest_os)
+          ccluster_hash[hname]['els_guests'] += 1
+        end
       end
+      # append guest of hypervisor to guest report, passing clu_hypervisor as guests are present in subscription_facet_attributes dict
+      collectguestdata(clu_hypervisor, guests_lists)
     end
 
     # 'print' in the csv file the guest report
-    if @options[:subreport]
-      printguestreport()
-    end
+    printguestreport()
 
     if @options[:debug]
       puts "All cluster hosts / guests count data:"
@@ -598,9 +610,19 @@ def checksubs()
       # dict the hash with all the data about it as number of hosts and guests
       dict_hosts = dict['hosts']
       dict_guests = dict['guests']
-      # divide guests by hosts and round to the first 3 decimal digit
-      dict_ratio = dict_guests.to_f / dict_hosts.to_f
-      dict_ratio = dict_ratio.round(3)
+      dict_socket = dict['socket']
+      dict_els_guests = dict['els_guests']
+
+      # divide guests by number of sockets hists divided by 2
+      dict_ratio = dict_guests.to_f / (dict_socket.to_f / 2)
+      # round to the first 2 decimal digit
+      dict_ratio = dict_ratio.round(2)
+
+      # divide guests by number of sockets hists divided by 2
+      dict_els_ratio = dict_els_guests.to_f / (dict_socket.to_f / 2)
+      # round to the first 2 decimal digit
+      dict_els_ratio = dict_els_ratio.round(2)
+
       dict_state = ""
       # if ratio is >= densityvalue (default 5) add cluster to the high density ones which has to be subscribed with VDC
       if dict_ratio >= @options[:densityvalue].to_f
@@ -610,7 +632,9 @@ def checksubs()
         total_guests_ok += dict_guests
         total_cluster_ok += 1
         # add the cluster name in full_cluster that represent the list of high density cluster
-        @full_cluster.push(dict_name)
+        if dict_name != 'nil' and dict_name != 'none'
+          @full_cluster.push(dict_name)
+        end
       else
         # else if it's lower mark status as ERROR (light density) and remove vdc subscription to this cluster
         dict_state = 'ERROR'
@@ -622,15 +646,20 @@ def checksubs()
         total_guests_bad += dict_guests
         total_cluster_bad += 1
         # add the cluster name in empty_cluster that represent the list of light density cluster
-        @empty_cluster.push(dict_name)
+        if dict_name != 'nil' and dict_name != 'none'
+          @empty_cluster.push(dict_name)
+        end
       end
       # add all the processed variables to cluster row for the CSV file
       cluster_row = {}
       cluster_row['index'] = dict_index
       cluster_row['name'] = dict_name
+      cluster_row['socket'] = dict_socket
       cluster_row['hosts'] = dict_hosts
       cluster_row['guests'] = dict_guests
       cluster_row['ratio'] = dict_ratio
+      cluster_row['els_guests'] = dict_els_guests
+      cluster_row['els_ratio'] = dict_els_ratio
       cluster_row['state'] = dict_state
       csvcluster.push(cluster_row)
       dict_index += 1
@@ -648,7 +677,7 @@ def checksubs()
     # write the CSV data in :densityfile, data separated with ; to avoid mismatch with , or . for decimal value
     CSV.open(@options[:densityfile], "wb", {:col_sep => ";"}) do |csv|
       # header of csv
-      csv << ["Index","Cluster Name","Hosts","Guests","Ratio","State"]
+      csv << ["Index","Cluster Name","Total Socekt","Hosts","Guests","Ratio","State","ELS Guests","ELS Ratio"]
       # print for last the host without cluster (none) or no rescue data in it (nil)
       none_index = -1
       nil_index = -1
@@ -663,28 +692,32 @@ def checksubs()
           next
         end
         # if current cluster isn't nil or none write in the csv file
-        csv << [cluster_row['index'],cluster_row['name'],cluster_row['hosts'],cluster_row['guests'],cluster_row['ratio'],cluster_row['state']]
+        csv << [cluster_row['index'],cluster_row['name'],cluster_row['socket'],cluster_row['hosts'],cluster_row['guests'],cluster_row['ratio'],cluster_row['state'],cluster_row['els_guests'],cluster_row['els_ratio']]
       end
       # if none cluster are present report it
       if none_index > -1
         none_cluster = (csvcluster.select {|clstr| clstr['name'] == 'none'}).first
         # none cluster => cluster data not found in Satellite and 'virt-who --print' hypervisor entry found but no cluster data present
         none_string = "NONE: cluster data not found in Satellite and 'virt-who --print' hypervisor entry found but no cluster data present"
-        csv << [none_cluster['index'].to_s, none_string, none_cluster['hosts'], none_cluster['guests'], none_cluster['ratio'], none_cluster['state'] ]
+        csv << [none_cluster['index'],none_string,none_cluster['socket'],none_cluster['hosts'],none_cluster['guests'],none_cluster['ratio'],none_cluster['state'],none_cluster['els_guests'],none_cluster['els_ratio']]
       end
       # if nil cluster are present report it
       if nil_index > -1
         nil_cluster = (csvcluster.select {|clstr| clstr['name'] == 'nil'}).first
         # nil cluster => cluster data not found in Satellite or/and 'virt-who --print' hypervisor entry not found
         nil_string = "NIL: cluster data not found in Satellite or/and 'virt-who --print' hypervisor entry not found"
-        csv << [nil_cluster['index'].to_s, nil_string, nil_cluster['hosts'], nil_cluster['guests'], nil_cluster['ratio'], nil_cluster['state'] ]
+        csv << [nil_cluster['index'],nil_string,nil_cluster['socket'],nil_cluster['hosts'],nil_cluster['guests'],nil_cluster['ratio'],nil_cluster['state'],nil_cluster['els_guests'],nil_cluster['els_ratio']]
       end
       # add also a global count of OK and ERROR cluster with their count
-      csv << ["Total", "OK Cluster", total_cluster_ok, "OK Hosts - Guests", total_hosts_ok, total_guests_ok]
-      csv << ["Total", "ERR Cluster", total_cluster_bad, "ERR Hosts - Guests", total_hosts_bad, total_guests_bad]
+      csv << [""]
+      csv << [""]
+      csv << ["","","Total", "OK Cluster", total_cluster_ok, "OK Hosts", total_hosts_ok, "OK Guests", total_guests_ok]
+      csv << ["","","Total", "ERR Cluster", total_cluster_bad, "ERR Hosts", total_hosts_bad,"ERR Guests", total_guests_bad]
     end
 
     puts "Density check of cluster completed. Saved in #{@options[:densityfile]}"
+    @empty_cluster.push('nil')
+    @empty_cluster.push('none')
     if @options[:debug]
       puts "\n  DEBUG: List of cluster with full hypervisor"
       p @full_cluster
@@ -1387,8 +1420,8 @@ def subsupdate()
 end
 
 
-# collect in @guest_list every guest with its host and cluster that would be print in a csv
-def collectguestdata(hypervisor_hash)
+# collect in @guest_list every guest with its host and cluster that would be print in :guestreportfile
+def collectguestdata(hypervisor_hash, guests_list)
   # if has guest start report, if not report as no guest are present for passed hypervisor
   if hypervisor_hash['subscription_facet_attributes']['virtual_guests'].count > 0
     if @options[:verbose]
@@ -1396,11 +1429,17 @@ def collectguestdata(hypervisor_hash)
     end
     # loop all the guest
     hypervisor_hash['subscription_facet_attributes']['virtual_guests'].each do |guest_data|
+      # get os of the guest
+      guest_position=guests_list.index{|sguest| sguest['name'] == guest_data['name']}
+      if guest_position
+        guest_os=guests_list[guest_position]['operatingsystem_name']
+      end
       # create hash for every guest with name, hypervisor name and hypervisor cluster
       guest_hash = {}
       guest_hash['name'] = guest_data['name']
       guest_hash['host'] = hypervisor_hash['name']
       guest_hash['cluster'] = hypervisor_hash['facts']['hypervisor::cluster']
+      guest_hash['operating_system'] = guest_os
       @guest_list.push(guest_hash)
     end
   else
@@ -1412,20 +1451,21 @@ def collectguestdata(hypervisor_hash)
     guest_hash['name'] = "No Guest"
     guest_hash['host'] = hypervisor_hash['name']
     guest_hash['cluster'] = hypervisor_hash['facts']['hypervisor::cluster']
+    guest_hash['operating_system'] = ""
     @guest_list.push(guest_hash)
   end
 end
 
-# print the csv file that report every vm with their detail
+# print in :guestreportfile the report for every record contained in @guest_list which contain hosts and cluster data for a virtual guests
 def printguestreport()
   if @options[:verbose]
     puts "    VERBOSE: Printing guest report in #{@options[:guestreportfile]}"
   end
   CSV.open(@options[:guestreportfile], "wb", {:col_sep => ";"}) do |csv|
     # header of csv
-    csv << ["Guest Name","Host Name","Cluster Name"]
+    csv << ["Guest Name","Host Name","Cluster Name", "Operative System"]
     @guest_list.each do |guest_data|
-      csv << [guest_data['name'], guest_data['host'], guest_data['cluster']]
+      csv << [guest_data['name'], guest_data['host'], guest_data['cluster'], guest_data['operating_system']]
     end
   end
 end
