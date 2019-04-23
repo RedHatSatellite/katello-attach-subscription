@@ -250,6 +250,9 @@ end
 # list of cluster that has density < @options[:densityvalue]
 @empty_cluster = []
 
+# list of cluster data calculated for --check-density options
+@cluster_data = []
+
 # lsit of hypervisor with cluster data attached on every hypervisor entry, used for checking density of the cluster
 @clustered_hypervisor_list = []
 
@@ -623,6 +626,7 @@ def checksubs()
       # round to the first 2 decimal digit
       dict_els_ratio = dict_els_ratio.round(2)
 
+      @cluster_data.push({"cluster_name" => dict_name, "cluster_socket" => dict_socket, "cluster_hosts" => dict_hosts, "cluster_guests" => dict_guests, "cluster_ratio" => dict_ratio, "cluster_els_guests" => dict_els_guests, "cluster_els_ratio" => dict_els_ratio})
       dict_state = ""
       # if ratio is >= densityvalue (default 5) add cluster to the high density ones which has to be subscribed with VDC
       if dict_ratio >= @options[:densityvalue].to_f
@@ -872,7 +876,7 @@ def subsupdate()
       if @options[:verbose]
         puts "VERBOSE: adding virt-who data to #{sys['name']}"
       end
-      sys = KatelloAttachSubscription::VirtWhoHelper.merge_system_virtwho(sys, @parsed_hypervisors_hash, @options[:org])
+      add_cluster_data(sys)
     end
     if @options[:debug]
       puts "  DEBUG: '#{system['name']}' id #{system['id']} :hosts api data:"
@@ -900,41 +904,7 @@ def subsupdate()
         end
       end
 
-      this_system_cluster = 'nil'
       skip_sub = true
-      if @options[:density] and system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
-        # retrieve cluster name of the hypervisor
-        if sys.has_key?('facts') and sys['facts'].has_key?('hypervisor::cluster')
-          this_system_cluster = sys['facts']['hypervisor::cluster']
-        end
-        if @options[:debug]
-          puts "   DEBUG: system cluster: #{this_system_cluster}"
-        end
-        if this_system_cluster == 'nil'
-          sys['facts'] ||= {}
-          sys['facts']['hypervisor::cluster'] = this_system_cluster
-        end
-      end
-      if KatelloAttachSubscription::HostMatcher.match_hostname(sub['hostname'], system['name'])
-        if @options[:debug]
-          puts " DEBUG: System '#{system['name']}' match the regexp '#{sub['hostname']}'"
-        end
-        skip_sub = false
-      end
-
-      # skip the sub if setted
-      if skip_sub
-        if @options[:verbose]
-          puts "  VERBOSE: skipping '#{system['name']}' as system cluster type doesn't match sub type or system name do not match following regexp:"
-          puts "           '#{sub['hostname']}'"
-        end
-        next
-      else
-        if @options[:debug]
-          # puts " DEBUG: System '#{system['name']}' match the regexp"
-          puts " DEBUG: System '#{system['name']}' can be subbed"
-        end
-      end
       # extract the (possible) virtual_host
       if sub.has_key?('virtual_host')
         virtualhostregex = Regexp.new(sub['virtual_host'])
@@ -968,69 +938,8 @@ def subsupdate()
         end
       end
 
-      # if hosts is an hypervisor, check if it's empty or in a low density cluster to attach or not subscription
-      if system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
-        skip_density = false
-        if sub.has_key?('skip_density')
-          skip_density = sub['skip_density']
-          if @options[:debug]
-            if skip_density
-              puts "  DEBUG: skip_density set to true, skip density check of cluster #{this_system_cluster}"
-            end
-          end
-        end
-        if @options[:density] and not skip_density
-          if not @full_cluster.include? this_system_cluster
-            # if empty remove and set skip_host to true
-            puts "  Hypervisor #{sys['name']} is in #{this_system_cluster} that isn't in an full cluster. Proced to removing subcription"
-            skip_host = true
-            # start subscription removing from hypervisor
-            rem_sub_response=apiCall(:host_subscriptions, :index, {:host_id => system['id']}, false)
-            if @api_error
-              STDERR.puts "   ERROR: Can't retrieve subscription data for Hypervisor #{system['name']} not found. Skipping"
-              next
-            end
-            if rem_sub_response["total"].to_i > 0
-              puts "    Starting removing subscriptions from Hypervisor"
-              rem_sub_response["results"].each_with_index do |rem_sub, currentsub|
-                if @options[:verbose]
-                  puts "      VERBOSE: Removing subscription #{currentsub+1} / #{rem_sub_response["total"].to_i} - #{rem_sub['id']}"
-                end
-                if @options[:debug]
-                  puts "      DEBUG: Current subscription data"
-                  p rem_sub
-                end
-                begin
-                  # removing the subscription
-                  if not @options[:noop]
-                    apiCall(:host_subscriptions, :remove_subscriptions, {:host_id => sys['id'], :subscriptions => [{:id => rem_sub['id']}]}, false)
-                    if not @api_error
-                      puts "      Removed subscription #{rem_sub['id']} from hypervisor #{sys['name']} / #{sys['id']}"
-                    else
-                      puts "      ERROR: Error while trying to remove subscription #{rem_sub['id']} from hypervisor #{sys['name']} / #{sys['id']}"
-                    end
-                  else
-                    puts "      [noop]: sub #{rem_sub['id']} would be removed from hypervisor #{sys['name']} / #{sys['id']}"
-                  end
-                rescue Exception => e
-                  puts "      ERROR: Unknow Error - Unable to remove subscription #{rem_sub["id"]} from #{sys["name"]}"
-                  puts e.message
-                  puts e.backtrace.inspect
-                  puts e.response
-                  exit 1
-                end
-              end
-            else
-              puts "    No subscription found attached to #{sys['name']}. Nothing to do."
-            end
-          else
-            puts "  Hypervisor #{sys['name']} is in #{this_system_cluster} that is a full cluster. Proced to subcription attaching"
-          end
-        end
-
-        if @options[:emptyhypervisor]
-          skip_host ||= !hypervisor_has_guests(sys)
-        end
+      if @options[:emptyhypervisor] and system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
+        skip_host ||= !hypervisor_has_guests(sys)
       end
 
       derived_sub = {}
@@ -1416,6 +1325,43 @@ def subsupdate()
     # always write the cache file at the end, to be used in the future
     puts "Writing YAML file into cache file #{cachefile}"
     File.open(cachefile, 'w') {|f| f.write(YAML.dump({'systems' => systems, 'system_details' => system_details, 'subs' => @yaml[:subs]})) }
+  end
+end
+
+
+# add additional data from cluster retrieved by --check-density and --virt-who options
+def add_cluster_data(sys)
+  # add virt-who data to hypervisor
+  sys = KatelloAttachSubscription::VirtWhoHelper.merge_system_virtwho(sys, @parsed_hypervisors_hash, @options[:org])
+  # add calculated cluster data from --check-density options
+  this_system_cluster = 'nil'
+  if @options[:density]
+    # retrieve cluster name of the hypervisor
+    if sys.has_key?('facts') and sys['facts'].has_key?('hypervisor::cluster')
+      this_system_cluster = sys['facts']['hypervisor::cluster']
+    end
+    if this_system_cluster == 'nil'
+      sys['facts'] ||= {}
+      sys['facts']['hypervisor::cluster'] = this_system_cluster
+    end
+    if @options[:debug]
+      puts "   DEBUG: system cluster: #{this_system_cluster}"
+    end
+    if this_system_cluster != "nil" and this_system_cluster != "none"
+      cluster_index = @cluster_data.index{|scluster| scluster['cluster_name'] == sys['facts']['hypervisor::cluster']}
+      if cluster_index
+        cluster_data = @cluster_data[cluster_index]
+        cluster_data.each do |key, value|
+          sys['facts'] ||= {}
+          key_name = "cluster_data::#{key}"
+          sys['facts'][key_name] = value
+        end
+        if @options[:debug]
+          puts "  DEBUG: All facts after cluster_data facts addition"
+          p sys['facts']
+        end
+      end
+    end
   end
 end
 
