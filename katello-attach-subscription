@@ -841,6 +841,7 @@ def subsupdate()
 
   puts "Subscription attaching process ended."
   if not @options[:usecache]
+    cachefile = @options[:cachefile].to_s + "_org" + @options[:org].to_s
     # always write the cache file at the end, to be used in the future
     puts "Writing YAML file into cache file #{cachefile}"
     File.open(cachefile, 'w') {|f| f.write(YAML.dump({'systems' => systems, 'subs' => @yaml[:subs]})) }
