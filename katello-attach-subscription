@@ -818,27 +818,6 @@ def subsupdate()
 
   puts "Starting host subscription assignment"
   systemstotal = systems.count
-  # cycle for each system found
-  systems.each_with_index do |system, currentcount|
-    if @options[:verbose]
-      puts " VERBOSE: Current system #{currentcount+1}/#{systemstotal}: #{system['name']} (#{system['id']})"
-    end
-    assignsubs(system)
-  end
-
-  # writing report of subscription usage counted by the script
-  if @options[:subreport]
-    puts "Writing report of counted subs"
-    printsubsreport()
-  end
-
-  puts "Subscription attaching process ended."
-  if not @options[:usecache]
-    cachefile = @options[:cachefile].to_s + "_org" + @options[:org].to_s
-    # always write the cache file at the end, to be used in the future
-    puts "Writing YAML file into cache file #{cachefile}"
-    File.open(cachefile, 'w') {|f| f.write(YAML.dump({'systems' => systems, 'subs' => @yaml[:subs]})) }
-  end
 
   # cycle for each system found
   systems.each_with_index do |system, currentcount|
