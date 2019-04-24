@@ -140,7 +140,7 @@ optparse = OptionParser.new do |opts|
   end
 
   opts.on("--repeat-API", "Allow to repeat API for a certain number before fail") do
-  @options[:repeatAPI] = true
+    @options[:repeatAPI] = true
   end
   opts.on("--max-step=MAX_STEP", "Set the number of tentative which API try to repeat API Call in case of fails") do |step|
     @options[:maxstep] = step
@@ -279,6 +279,10 @@ end
 ]
 
 # check functions
+
+# hash of hypervisor with their parsed desired sub
+@desired_product = {}
+
 def checksubs()
   # initialize variables
   # by default any kind of subscription is fine
@@ -976,7 +980,7 @@ def assignsubs(system)
     derived_sub = {}
     attachable_subs = []
     # if system is a guest and density option is on, check if use_derived is true
-    if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST and @options[:density] and use_derived
+    if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST and use_derived
       # if so, fetch the stack-derived sub available for that host and replace the one in sub_parsing
       if @options[:verbose]
         puts "   VERBOSE: System #{system['name']} is a Guest and desire stack-derived sub, search for it"
@@ -1042,6 +1046,30 @@ def assignsubs(system)
       else
         # set change sub to true will attach the derivated one from
         has_derived_sub = true
+        # add the remaining product to attach searching for hypervisor in @desired_product
+        if sys['subscription_facet_attributes']['virtual_host']
+          guest_hypervisor = sys['subscription_facet_attributes']['virtual_host']['name']
+          if @options[:verbose]
+            puts "  VERBOSE: Adding product for #{sys['name']} that aren't derivable on #{guest_hypervisor}"
+          end
+          if @desired_product[guest_hypervisor]
+            derived_products = @desired_product[guest_hypervisor]
+            # sub['parsed_product']
+            sub['sub_parsed'].each do |product, parsed_product|
+              if derived_products.count(product) == 0
+                derived_sub[product] = parsed_product
+              end
+            end
+          else
+            if @options[:verbose]
+              puts "    VERBOSE: No non derivable product added for #{sys['name']}"
+            end
+          end
+        end
+      end
+      if @options[:debug]
+        puts "      DEBUG: Subscription to attach at guest #{system['name']}"
+        p derived_sub
       end
     end
 
@@ -1123,6 +1151,10 @@ def assignsubs(system)
     p desired_sub_hash
   end
 
+  if system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
+    add_hypervisor_product(system['name'], desired_sub_hash)
+  end
+
   if desired_sub_hash or not remove_subs.empty?
     # maybe we do not have any subs to add, but remove_subs was not empty
     if not desired_sub_hash
@@ -1158,7 +1190,7 @@ def assignsubs(system)
           puts "  #{system['name']} need #{total_subscriptions} subscriptions for sub #{sub['id']}"
           subscriptions_needed = total_subscriptions - sub['quantity_consumed'].to_i
 
-          if @options[:subreport] and not has_derived_sub
+          if @options[:subreport] and not sub['type'] == "STACK_DERIVED"
             # count the sub to add, if not just present
             if @options[:debug]
               puts "      DEBUG: Current counted sub: #{sub_counted}"
@@ -1176,6 +1208,7 @@ def assignsubs(system)
               end
             end
           end
+          # if stack derived subs are to be attached skip the part of cleaning
           if not has_derived_sub
             # check sub needed = 0
             if subscriptions_needed == 0
@@ -1214,7 +1247,7 @@ def assignsubs(system)
           has_desired_sub = true
         # else, if this is not among the desired subscriptions (ALL of them, not only the current product)
         # and remove_other is set, remove this subscription to the system
-        elsif sub['cp_id'] != nil and not desired_sub_hash.flatten(2).include?(sub['cp_id']) and (remove_other or remove_subs.include?(sub['cp_id'])) and not (keep_virt_only and sub.has_key?('virt_only') and sub['virt_only']) and not keep_subs.include?(sub['cp_id'])
+        elsif sub['cp_id'] != nil and not desired_sub_hash.flatten(2).include?(sub['cp_id']) and (remove_other or remove_subs.include?(sub['cp_id'])) and not (keep_virt_only and sub.has_key?('virt_only') and sub['virt_only']) and not keep_subs.include?(sub['cp_id']) and sub['type'] != "STACK_DERIVED"
           puts "  removing subscription #{sub['cp_id']} from system #{system['name']}"
           if not @options[:noop]
             apiCall(:host_subscriptions, :remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]}, false)
@@ -1265,7 +1298,7 @@ def assignsubs(system)
             next
           end
 
-          if @options[:subreport] and not has_derived_sub
+          if @options[:subreport] and not desired_quantity == 0
             # count the sub to add, if not just present
             if @options[:debug]
               puts "      DEBUG: Current counted sub: #{sub_counted}"
@@ -1307,7 +1340,7 @@ def assignsubs(system)
         end
 
         # if no sub attached but needed, add to the count that you need the first one
-        if @options[:subreport] and not has_derived_sub
+        if @options[:subreport] and not desired_quantity == 0
           if not sub_attached
             # mark as missing the first desired_subs entry
             sub_missing = desired_subs_hash.first
@@ -1345,6 +1378,30 @@ def assignsubs(system)
   if system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
     subscribe_guest(system['name'])
   end
+end
+
+# add to the dictionary of requested product the product to be removed because derived
+def add_hypervisor_product(hypervisor_name, requested_sub)
+ if @desired_product.has_key?(hypervisor_name)
+   return
+ end
+ if @options[:verbose]
+   puts "  VERBOSE: Adding desired product for hypevisor #{hypervisor_name}"
+ end
+ if requested_sub and requested_sub.count > 0
+   @desired_product[hypervisor_name] = []
+   requested_sub.each do |product, product_sub_array|
+     @desired_product[hypervisor_name].push(product)
+   end
+   if @options[:debug]
+     puts "    DEBUG: Product added for #{hypervisor_name}"
+     p @desired_product[hypervisor_name]
+   end
+ else
+   if @options[:verbose]
+     puts "  VERBOSE: No product to be add on hypervisor list"
+   end
+ end
 end
 
 # subscribe guest after hypervisor update, still wip as to implement new use_derived function
@@ -1562,7 +1619,7 @@ def printsubsreport()
       sub_hash = getsubdetailfor(sub_name)
       count_state = "OK"
       instance_multiplier = 1
-      if @exception_sub.include?(sub_name)
+      if KatelloAttachSubscription::Utils::EXCEPTION_SUB.include?(sub_name)
         instance_multiplier = 2
       end
       sub_count = (sub_count.to_f/instance_multiplier.to_f).ceil
@@ -1577,14 +1634,7 @@ def printsubsreport()
   end
   CSV.open(@options[:detailedsubreportfile], "wb", {:col_sep => ";"}) do |csv|
     # header of csv
-    csv << ["Server Name", "Expected Subscription", "Expected Quantity", "Type"]
-    @detailed_report.each do |sub_entry|
-      csv << [sub_entry["hostname"], sub_entry["subname"], sub_entry["quantity"], sub_entry["type"]]
-    end
-  end
-  CSV.open(@options[:detailedsubreportfile], "wb", {:col_sep => ";"}) do |csv|
-    # header of csv
-    csv << ["Server Name", "Expected Subscription", "Expected Quantity"]
+    csv << ["Server Name", "Expected Subscription", "Expected Entitlement Quantity", "Type"]
     @detailed_report.each do |sub_entry|
       csv << [sub_entry["hostname"], sub_entry["subname"], sub_entry["quantity"], sub_entry["type"]]
     end
