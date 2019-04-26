@@ -32,28 +32,37 @@ require_relative 'lib/katello_attach_subscription'
 $stdout.sync = true
 
 @defaults = {
-  :noop             => false,
-  :uri              => 'https://localhost/',
-  :timeout          => 300,
-  :user             => 'admin',
-  :pass             => 'changeme',
-  :org              => 1,
-  :usecache         => false,
-  :cachefile        => 'katello-attach-subscription.cache',
-  :virtwho          => false,
-  :virtwhocachefile => 'virt-who.cache',
-  :emptyhypervisor  => false,
-  :debug            => false,
-  :verbose          => false,
-  :search           => nil,
-  :density          => false,
-  :densityfile      => 'cluster-state.csv',
-  :guestreportfile  => 'guest-report.csv',
-  :densityvalue     => 5,
-  :subreport        => false,
-  :subreportfile    => 'sub-report.csv',
+  :noop                  => false,
+  :uri                   => 'https://localhost/',
+  :timeout               => 300,
+  :user                  => 'admin',
+  :pass                  => 'changeme',
+  :org                   => 1,
+  :usecache              => false,
+  :cachefile             => 'katello-attach-subscription.cache',
+  :virtwho               => false,
+  :virtwhocachefile      => 'virt-who.cache',
+  :emptyhypervisor       => false,
+  :debug                 => false,
+  :verbose               => false,
+  :search                => nil,
+  :density               => false,
+  :densityfile           => 'cluster-state.csv',
+  :guestreportfile       => 'guest-report.csv',
+  :densityvalue          => 4,
+  :elsdensityvalue       => 4,
+  :elsosversion          => "<6",
+  :subreport             => false,
+  :subreportfile         => 'sub-report.csv',
   :detailedsubreportfile => 'detailed-report.csv',
-  :verify_ssl       => true
+  :verify_ssl            => true,
+  :repeatAPI             => false,
+  :maxstep               => 1,
+  :sleepAPI              => false,
+  :sleepTime             => 0,
+  :sleepMult             => 1,
+  :multisearch           => false,
+  :clean_sub             => false
 }
 
 @options = {
@@ -122,6 +131,24 @@ optparse = OptionParser.new do |opts|
     @options[:subreportfile] = srf
   end
 
+  opts.on("--multiple-search", "Allow to search content-hosts with the order of query result in yaml configuration file") do
+    @options[:multisearch] = true
+  end
+
+  opts.on("--clean-same-product", "Ensure that all the content hosts has 1 subscriptions for every product found from yaml configuration file") do
+    @options[:clean_sub] = true
+  end
+
+  opts.on("--repeat-API", "Allow to repeat API for a certain number before fail") do
+    @options[:repeatAPI] = true
+  end
+  opts.on("--max-step=MAX_STEP", "Set the number of tentative which API try to repeat API Call in case of fails") do |step|
+    @options[:maxstep] = step
+  end
+  opts.on("--repeat-API-sleep", "Allow to add an incremental waiting time configurable via configuration file") do
+    @options[:sleepAPI] = true
+  end
+
   opts.on("-v", "--verbose", "verbose output for the script") do
     @options[:verbose] = true
   end
@@ -171,6 +198,26 @@ if @options[:virtwho]
   end
 end
 
+# if options sleepAPI get the value of
+if @options[:sleepAPI]
+  if @yaml.has_key?(:sleep)
+    if @yaml[:sleep].has_key?(:base)
+      @options[:sleepTime] = @yaml[:sleep][:base]
+    else
+      if @options[:debug]
+        puts " DEBUG: --sleep-API option requested, but :base value not configured in YAML file, using default value"
+      end
+    end
+    if @yaml[:sleep].has_key?(:multiplier)
+      @options[:sleepMult] = @yaml[:sleep][:multiplier]
+    else
+      if @options[:debug]
+        puts " DEBUG: --sleep-API options requested but :multiplier value not configured in YAML file, using default value"
+      end
+    end
+  end
+end
+
 # satellite url has to start with https or PUT will fail with http error
 unless @options[:uri].start_with?('https://')
   abort "FATAL ERROR: the uri must start with https://"
@@ -186,6 +233,9 @@ end
 # binding api
 @api = ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]}, {:verify_ssl => @options[:verify_ssl]})
 
+# error passed trough api call
+@api_error = false
+
 # global variable of the script
 
 # availability of virt-who data after cache parsing or virt-who --print running
@@ -200,6 +250,9 @@ end
 # list of cluster that has density < @options[:densityvalue]
 @empty_cluster = []
 
+# list of cluster data calculated for --check-density options
+@cluster_data = []
+
 # lsit of hypervisor with cluster data attached on every hypervisor entry, used for checking density of the cluster
 @clustered_hypervisor_list = []
 
@@ -212,6 +265,8 @@ end
 # array with all the subs consumed by all the hosts
 @detailed_report = []
 
+# list of hosts id that are already passed in katello-attach-subscription
+@checked_hosts = []
 
 # INSTANCE_MULTIPLIER WORKAROUND (BZ 1664614 - https://bugzilla.redhat.com/show_bug.cgi?id=1664614)
 # full explanation of the bug and workaround in the readme
@@ -224,6 +279,10 @@ end
 ]
 
 # check functions
+
+# hash of hypervisor with their parsed desired sub
+@desired_product = {}
+
 def checksubs()
   # initialize variables
   # by default any kind of subscription is fine
@@ -246,7 +305,6 @@ def checksubs()
   if not cachepresent
     puts "Subscription parsing started. Please be patient."
     subsyamltotalentry = @yaml[:subs].count
-
     @yaml[:subs].each_with_index do |sub, subcurrentcount|
       # search always for NORMAL sub as they could be attached booth hypervisor, physical and guest host
       subfiltertype = "NORMAL"
@@ -286,10 +344,7 @@ def checksubs()
               puts "   VERBOSE: parsing subscription '#{subscription_item}'"
             end
             # fetch all the result searching subscription by their name, stored in subscription_item
-
-            # if subscription_item is an hash search for key = value, either search for the value
             search_options = KatelloAttachSubscription::Utils.search_args(subscription_item)
-
             parsed_subscription = fetch_all_results(:subscriptions,:index,{:search => search_options, :available_for => "host"})
             # if the lookup has given no results at all, no subscriptions has to be added
             if parsed_subscription.empty?
@@ -381,6 +436,7 @@ def checksubs()
     # if run_virtwho_print is true then run virt-who --print
     if run_virtwho_print
       puts "Running the command '#{@virtwho_location} --print' to retrieve Hypervisors data. Please be patient."
+
       # run virt-who --print and send debug output to /dev/null as it's not useful for the script
       virtwho_print_output = `#{@virtwho_location} --print 2>> /dev/null`
       # if extited correctly start to parse the output
@@ -413,6 +469,7 @@ def checksubs()
         puts "FATAL ERROR: something went wrong while running virt-who --print command. Possible fix it's to avoid running virt-who as service"
         exit 5
       end
+
     end
     if @options[:debug]
       puts " DEBUG: the full hypervisor data from JSON output after using virt-who option is:"
@@ -444,25 +501,18 @@ def checksubs()
         puts "    VERBOSE: Current hypervisor #{currentcount+1}/#{hypervisors_list.count}: #{system['name']} (#{system['id']})"
       end
       # retrieve full data for every hypervisor found
-      begin
-        sys = @api.resource(:hosts).call(:show, {:id => system['id'], :fields => 'full'})
-        if @options[:virtwho] and @virtwho_data
-          if @options[:verbose]
-            puts "VERBOSE: adding virt-who data to #{sys['name']}"
-          end
-          sys = KatelloAttachSubscription::VirtWhoHelper.merge_system_virtwho(sys, @parsed_hypervisors_hash, @options[:org])
-        end
-        hypervisors_collection.push(sys)
-      rescue RestClient::NotFound
-        STDERR.puts "   ERROR: Hypervisor '#{system['name']}' not found. Skipping."
+      sys = apiCall(:hosts, :show, { :id => system['id'], :fields => 'full' }, false)
+      if @api_error
+        STDERR.puts "  ERROR: Hypervisor '#{system['name']}' not found. Skipping"
         next
-      rescue Exception => e
-        puts "   ERROR: Unknow Error -- Unable to retrieve details for hypervisor #{system['id']} #{system['name']}"
-        puts e.message
-        puts e.backtrace.inspect
-        puts e.response
-        exit 1
       end
+      if @options[:virtwho] and @virtwho_data
+        if @options[:verbose]
+          puts "VERBOSE: adding virt-who data to #{sys['name']}"
+        end
+        sys = KatelloAttachSubscription::VirtWhoHelper.merge_system_virtwho(sys, @parsed_hypervisors_hash, @options[:org])
+      end
+      hypervisors_collection.push(sys)
     end
     puts "Collecting hypervisor data completed successfully"
     if @options[:debug]
@@ -518,23 +568,34 @@ def checksubs()
     # loop all the clustered hypervisor
     @clustered_hypervisor_list.each_with_index do |clu_hypervisor, index|
       hname = clu_hypervisor['facts']['hypervisor::cluster']
+      hsocket = 1
+      if clu_hypervisor['facts'].has_key?('cpu::cpu_socket(s)')
+        hsocket = clu_hypervisor['facts']['cpu::cpu_socket(s)'].to_i
+      end
       # if no cluster are already present in ccluster dict, with all the data, create the new entry
       if not ccluster_hash.has_key?(hname)
-        ccluster_hash[hname] = {'hosts' => 0, 'guests' => 0}
+        ccluster_hash[hname] = {'hosts' => 0, 'guests' => 0, 'socket' => 0, 'els_guests' => 0}
       end
       # set the value of hosts and guests found in hypervisor entry
       ccluster_hash[hname]['hosts'] += 1
       ccluster_hash[hname]['guests'] += clu_hypervisor['subscription_facet_attributes']['virtual_guests'].count
-      # append guest of hypervisor to guest report, passing clu_hypervisor as guests are present in subscription_facet_attributes dict
-      if @options[:subreport]
-        collectguestdata(clu_hypervisor)
+      ccluster_hash[hname]['socket'] += hsocket
+      # getting guests data of the hypervisor searching for els
+      search_options = "hypervisor_host=virt-who-#{clu_hypervisor['name']}-#{@options[:org]} and organization_id=#{@options[:org]}"
+      guests_lists = fetch_all_results(:hosts, :index, {:search => search_options})
+      # looping to check which guests need ELS
+      guests_lists.each do |single_guest|
+        single_guest_os = single_guest['operatingsystem_name'].gsub(/[^\d.]/,'')
+        if KatelloAttachSubscription::HostMatcher.match_version(@options[:elsosversion], single_guest_os)
+          ccluster_hash[hname]['els_guests'] += 1
+        end
       end
+      # append guest of hypervisor to guest report, passing clu_hypervisor as guests are present in subscription_facet_attributes dict
+      collectguestdata(clu_hypervisor, guests_lists)
     end
 
     # 'print' in the csv file the guest report
-    if @options[:subreport]
-      printguestreport()
-    end
+    printguestreport()
 
     if @options[:debug]
       puts "All cluster hosts / guests count data:"
@@ -558,9 +619,20 @@ def checksubs()
       # dict the hash with all the data about it as number of hosts and guests
       dict_hosts = dict['hosts']
       dict_guests = dict['guests']
-      # divide guests by hosts and round to the first 3 decimal digit
-      dict_ratio = dict_guests.to_f / dict_hosts.to_f
-      dict_ratio = dict_ratio.round(3)
+      dict_socket = dict['socket']
+      dict_els_guests = dict['els_guests']
+
+      # divide guests by number of sockets hists divided by 2
+      dict_ratio = dict_guests.to_f / (dict_socket.to_f / 2)
+      # round to the first 2 decimal digit
+      dict_ratio = dict_ratio.round(2)
+
+      # divide guests by number of sockets hists divided by 2
+      dict_els_ratio = dict_els_guests.to_f / (dict_socket.to_f / 2)
+      # round to the first 2 decimal digit
+      dict_els_ratio = dict_els_ratio.round(2)
+
+      @cluster_data.push({"cluster_name" => dict_name, "cluster_socket" => dict_socket, "cluster_hosts" => dict_hosts, "cluster_guests" => dict_guests, "cluster_ratio" => dict_ratio, "cluster_els_guests" => dict_els_guests, "cluster_els_ratio" => dict_els_ratio})
       dict_state = ""
       # if ratio is >= densityvalue (default 5) add cluster to the high density ones which has to be subscribed with VDC
       if dict_ratio >= @options[:densityvalue].to_f
@@ -570,7 +642,9 @@ def checksubs()
         total_guests_ok += dict_guests
         total_cluster_ok += 1
         # add the cluster name in full_cluster that represent the list of high density cluster
-        @full_cluster.push(dict_name)
+        if dict_name != 'nil' and dict_name != 'none'
+          @full_cluster.push(dict_name)
+        end
       else
         # else if it's lower mark status as ERROR (light density) and remove vdc subscription to this cluster
         dict_state = 'ERROR'
@@ -582,15 +656,20 @@ def checksubs()
         total_guests_bad += dict_guests
         total_cluster_bad += 1
         # add the cluster name in empty_cluster that represent the list of light density cluster
-        @empty_cluster.push(dict_name)
+        if dict_name != 'nil' and dict_name != 'none'
+          @empty_cluster.push(dict_name)
+        end
       end
       # add all the processed variables to cluster row for the CSV file
       cluster_row = {}
       cluster_row['index'] = dict_index
       cluster_row['name'] = dict_name
+      cluster_row['socket'] = dict_socket
       cluster_row['hosts'] = dict_hosts
       cluster_row['guests'] = dict_guests
       cluster_row['ratio'] = dict_ratio
+      cluster_row['els_guests'] = dict_els_guests
+      cluster_row['els_ratio'] = dict_els_ratio
       cluster_row['state'] = dict_state
       csvcluster.push(cluster_row)
       dict_index += 1
@@ -608,7 +687,7 @@ def checksubs()
     # write the CSV data in :densityfile, data separated with ; to avoid mismatch with , or . for decimal value
     CSV.open(@options[:densityfile], "wb", {:col_sep => ";"}) do |csv|
       # header of csv
-      csv << ["Index","Cluster Name","Hosts","Guests","Ratio","State"]
+      csv << ["Index","Cluster Name","Total Socekt","Hosts","Guests","Ratio","State","ELS Guests","ELS Ratio"]
       # print for last the host without cluster (none) or no rescue data in it (nil)
       none_index = -1
       nil_index = -1
@@ -623,28 +702,32 @@ def checksubs()
           next
         end
         # if current cluster isn't nil or none write in the csv file
-        csv << [cluster_row['index'],cluster_row['name'],cluster_row['hosts'],cluster_row['guests'],cluster_row['ratio'],cluster_row['state']]
+        csv << [cluster_row['index'],cluster_row['name'],cluster_row['socket'],cluster_row['hosts'],cluster_row['guests'],cluster_row['ratio'],cluster_row['state'],cluster_row['els_guests'],cluster_row['els_ratio']]
       end
       # if none cluster are present report it
       if none_index > -1
         none_cluster = (csvcluster.select {|clstr| clstr['name'] == 'none'}).first
         # none cluster => cluster data not found in Satellite and 'virt-who --print' hypervisor entry found but no cluster data present
         none_string = "NONE: cluster data not found in Satellite and 'virt-who --print' hypervisor entry found but no cluster data present"
-        csv << [none_cluster['index'].to_s, none_string, none_cluster['hosts'], none_cluster['guests'], none_cluster['ratio'], none_cluster['state'] ]
+        csv << [none_cluster['index'],none_string,none_cluster['socket'],none_cluster['hosts'],none_cluster['guests'],none_cluster['ratio'],none_cluster['state'],none_cluster['els_guests'],none_cluster['els_ratio']]
       end
       # if nil cluster are present report it
       if nil_index > -1
         nil_cluster = (csvcluster.select {|clstr| clstr['name'] == 'nil'}).first
         # nil cluster => cluster data not found in Satellite or/and 'virt-who --print' hypervisor entry not found
         nil_string = "NIL: cluster data not found in Satellite or/and 'virt-who --print' hypervisor entry not found"
-        csv << [nil_cluster['index'].to_s, nil_string, nil_cluster['hosts'], nil_cluster['guests'], nil_cluster['ratio'], nil_cluster['state'] ]
+        csv << [nil_cluster['index'],nil_string,nil_cluster['socket'],nil_cluster['hosts'],nil_cluster['guests'],nil_cluster['ratio'],nil_cluster['state'],nil_cluster['els_guests'],nil_cluster['els_ratio']]
       end
       # add also a global count of OK and ERROR cluster with their count
-      csv << ["Total", "OK Cluster", total_cluster_ok, "OK Hosts - Guests", total_hosts_ok, total_guests_ok]
-      csv << ["Total", "ERR Cluster", total_cluster_bad, "ERR Hosts - Guests", total_hosts_bad, total_guests_bad]
+      csv << [""]
+      csv << [""]
+      csv << ["","","Total", "OK Cluster", total_cluster_ok, "OK Hosts", total_hosts_ok, "OK Guests", total_guests_ok]
+      csv << ["","","Total", "ERR Cluster", total_cluster_bad, "ERR Hosts", total_hosts_bad,"ERR Guests", total_guests_bad]
     end
 
     puts "Density check of cluster completed. Saved in #{@options[:densityfile]}"
+    @empty_cluster.push('nil')
+    @empty_cluster.push('none')
     if @options[:debug]
       puts "\n  DEBUG: List of cluster with full hypervisor"
       p @full_cluster
@@ -679,21 +762,10 @@ def checksubs()
           next
         end
         # if no guests present, retrieve all subscription data from that hypervisor
-        begin
-          rem_sub_response = @api.resource(:host_subscriptions).call(:index, {:host_id => system['id']})
-          if @options[:debug]
-            puts "   DEBUG: Retrieved subscription data of #{system['name']}"
-            p rem_sub_response
-          end
-        rescue RestClient::NotFound
+        rem_sub_response = apiCall(:host_subscriptions, :index, {:host_id => system['id']}, false)
+        if @api_error
           STDERR.puts "   ERROR: Hypervisor #{system['name']} subscription data not found. Skipping."
           next
-        rescue Exception => e
-          puts "   ERROR: Unknow Error -- Unable to retrieve subscription data for hypervisor #{system['id']} #{system['name']}"
-          puts e.message
-          puts e.backtrace.inspect
-          puts e.response
-          exit 1
         end
         # check if data found (API return data successfully)
         if not rem_sub_response.has_key?("total")
@@ -713,20 +785,15 @@ def checksubs()
               puts "      DEBUG: Current subscription data"
               p rem_sub
             end
-            begin
-              # removing the subscription calling remove_subscriptions API
-              if not @options[:noop]
-                @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => rem_sub['id']}]})
-                puts "      Removed subscription #{rem_sub['id']} from hypervisor #{system['name']} / #{system['id']}"
-              else
-                puts "      [noop]: sub #{rem_sub['id']} would be removed from hypervisor #{system['name']} / #{system['id']}"
+            if not @options[:noop]
+              apiCall(:host_subscriptions, :remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => rem_sub['id']}]}, false )
+              if @api_error
+                puts "      Can't remove subscription #{rem_sub['id']} from hypervisor #{system['name']} / #{system['id']}. Skipping"
+                next
               end
-            rescue Exception => e
-              puts "      ERROR: Unknow Error - Unable to remove subscription #{rem_sub["id"]} from #{system["name"]}"
-              puts e.message
-              puts e.backtrace.inspect
-              puts e.response
-              exit 1
+              puts "      Removed subscription #{rem_sub['id']} from hypervisor #{system['name']} / #{system['id']}"
+            else
+              puts "      [noop]: sub #{rem_sub['id']} would be removed from hypervisor #{system['name']} / #{system['id']}"
             end
           end
         else
@@ -742,741 +809,32 @@ def checksubs()
 end
 
 # main function
-def vdcupdate()
-  @default_type = nil
+def subsupdate()
   # initialize variables
+  @default_type = nil
+  @subs_count = {}
+  @detailed_report = []
   systems = []
-  guests_systems = []
-  system_details = {}
   hosts_data = []
   hosts_details_data = {}
-  subs = {}
-  req = nil
-  cachefile = @options[:cachefile].to_s + "_org" + @options[:org].to_s
   # Fill systems array from API of satellite. Check for cache usage.
-  if @options[:usecache]
-    puts "Starting host collection from cache. Please be patient."
-    cachefile = "#{@options[:cachefile]}_org#{@options[:org]}"
-    systems = readfromcache(cachefile, 'systems')
-    system_details = readfromcache(cachefile, 'system_details')
-  else
-    # no cache wanted
-    puts "Starting host collection from API. Please be patient."
-    # checking all of the systems 100 at the time, from page 0 to latest
-    # first of all, search for hypervisor as we would like to subscribe in order hypervisors, physicals and guests
-    # Currently there is a BZ opened as is not possible to absolute search hypervisor, physical and guest (BZ1635861)
-    search_options = KatelloAttachSubscription::Utils.search_args(['hypervisor=true', @options[:search]])
-    puts "Searching for Hypervisors"
-    systems = fetch_all_results(:hosts, :index, {:search => search_options})
-    hypervisor_count = systems.count
-    puts "Completed hypervisor collection."
-    puts "Hypervisors entry: #{hypervisor_count}"
-    # research physical hosts filtering facts.virt::host_type="Not Applicable"
-    search_options = KatelloAttachSubscription::Utils.search_args(['facts.virt::host_type="Not Applicable"', @options[:search]])
-    puts "Searching for Physicals"
-    systems.concat(fetch_all_results(:hosts, :index, {:search => search_options}))
-    physical_count = systems.count
-    puts "Completed physical collection."
-    puts "Physical entry: #{physical_count - hypervisor_count}"
-    # search guests one, filtering facts.virt::is_guest = true
-    search_options = KatelloAttachSubscription::Utils.search_args(['facts.virt::is_guest=true', @options[:search]])
-    puts "Searching for Guests"
-    systems.concat(fetch_all_results(:hosts, :index, {:search => search_options}))
-    virt_count = systems.count
-    puts "Completed guests collection."
-    puts "Hosts Entry: #{virt_count - physical_count}"
-    puts "Total Entry: #{virt_count}"
-  end
+  systems = fetch_all_systems
 
   puts "Starting host subscription assignment"
   systemstotal = systems.count
+
   # cycle for each system found
   systems.each_with_index do |system, currentcount|
-    # initialize variable
-    has_desired_sub = nil
-    desired_sub = nil
-    desired_sub_hash = nil
-    desired_type = @default_type
-    remove_other = true
-    remove_subs = []
-    keep_subs = []
-    auto_attach = false
-    keep_virt_only = false
-    virtual_host = nil
-    desired_quantity = 1
-    sys_socket = 1
-    hypervisor_found = false
-    this_system_cluster = ""
-    sys = nil
-    skip_report = false
-    sub_counted = []
-
-    skip_host = false
-    has_derived_sub = false
-
-    # add to array system the name of the system itself taken from id
     if @options[:verbose]
       puts " VERBOSE: Current system #{currentcount+1}/#{systemstotal}: #{system['name']} (#{system['id']})"
     end
-
-    # get detail for the current system to be checked.
-    if @options[:debug]
-      puts " DEBUG: detail of the current system to be checked:"
-      p system
-    end
-    sys = @api.resource(:hosts).call(:show, {:id => system['id'].to_i, :fields => 'full'})
-    if sys.count <= 0
-      puts "  WARNING: System name '#{system['name']}' not found. Is cache in use? Skipping."
-      next
-    end
-    # if host isn't registered by subscription manager for anyone reason, skip
-    if not sys.has_key?('subscription_facet_attributes')
+    if @checked_hosts.count(system['id']) > 0
       if @options[:verbose]
-        puts "  VERBOSE: Skipping #{sys['name']} as it isn't registered with subscription manager"
+        puts "   VERBOSE: host #{system['name']} is already checked. Skip to next host"
       end
       next
     end
-    if @options[:virtwho] and @virtwho_data
-      if @options[:verbose]
-        puts "VERBOSE: adding virt-who data to #{sys['name']}"
-      end
-      sys = KatelloAttachSubscription::VirtWhoHelper.merge_system_virtwho(sys, @parsed_hypervisors_hash, @options[:org])
-    end
-    if @options[:debug]
-      puts "  DEBUG: '#{system['name']}' id #{system['id']} :hosts api data:"
-      p sys
-    end
-    system_details[system['name']]=sys
-    # check if the type requested match the host one
-    system_type = KatelloAttachSubscription::FactAnalyzer.system_type(sys)
-    # for each item in yaml extract sub
-    if @options[:debug]
-      puts " DEBUG: YAML dump with all definitions for the current system"
-      p @yaml
-    end
-    @yaml[:subs].each do |sub|
-      # if "type" has been specified on yaml file check if match.
-      # the default is to check on "Hypervisor"
-      # if DO NOT match, skip to next sub
-      # fixme: can't find this detail in new API
-      if sub.has_key?('type')
-        unless KatelloAttachSubscription::HostMatcher.match_type(sub['type'], system_type)
-          if @options[:verbose]
-            puts "  VERBOSE: Skipping '#{system['name']}' as system type '#{system_type}' is different from desired '#{sub['type']}'"
-          end
-          next
-        end
-      end
-
-      this_system_cluster = 'nil'
-      skip_sub = true
-      if @options[:density] and system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
-        # retrieve cluster name of the hypervisor
-        if sys.has_key?('facts') and sys['facts'].has_key?('hypervisor::cluster')
-          this_system_cluster = sys['facts']['hypervisor::cluster']
-        end
-        if @options[:debug]
-          puts "   DEBUG: system cluster: #{this_system_cluster}"
-        end
-        if this_system_cluster == 'nil'
-          sys['facts'] ||= {}
-          sys['facts']['hypervisor::cluster'] = this_system_cluster
-        end
-      end
-      if KatelloAttachSubscription::HostMatcher.match_hostname(sub['hostname'], system['name'])
-        if @options[:debug]
-          puts " DEBUG: System '#{system['name']}' match the regexp '#{sub['hostname']}'"
-        end
-        skip_sub = false
-      end
-
-      # skip the sub if setted
-      if skip_sub
-        if @options[:verbose]
-          puts "  VERBOSE: skipping '#{system['name']}' as system cluster type doesn't match sub type or system name do not match following regexp:"
-          puts "           '#{sub['hostname']}'"
-        end
-        next
-      else
-        if @options[:debug]
-          # puts " DEBUG: System '#{system['name']}' match the regexp"
-          puts " DEBUG: System '#{system['name']}' can be subbed"
-        end
-      end
-      # extract the (possible) virtual_host
-      if sub.has_key?('virtual_host')
-        virtualhostregex = Regexp.new(sub['virtual_host'])
-      else
-        virtualhostregex = nil
-      end
-      # test all the facts
-      if @options[:verbose]
-        puts "VERBOSE: Start testing facts value for #{sys['name']}"
-      end
-      fact_test_passed = KatelloAttachSubscription::HostMatcher.match_host(sys, sub)
-      unless fact_test_passed
-        if @options[:verbose]
-          puts "  VERBOSE: Host #{sys['name']} doesn't pass facts test. Skip to the next sub entry."
-        end
-        next
-      else
-        if @options[:verbose]
-          puts "  VERBOSE: Host #{sys['name']} pass fact test. Proceed to attach sub."
-        end
-      end
-
-      use_derived = false
-      # get the value of use_derived from the yaml sub entry, if setted
-      if sub.has_key?('use_derived')
-        use_derived = sub['use_derived']
-        if @options[:debug]
-          if use_derived
-            puts "  DEBUG: use_derived set to #{use_derived}"
-          end
-        end
-      end
-
-      # if hosts is an hypervisor, check if it's empty or in a low density cluster to attach or not subscription
-      if system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
-        skip_density = false
-        if sub.has_key?('skip_density')
-          skip_density = sub['skip_density']
-          if @options[:debug]
-            if skip_density
-              puts "  DEBUG: skip_density set to true, skip density check of cluster #{this_system_cluster}"
-            end
-          end
-        end
-        if @options[:density] and not skip_density
-          if not @full_cluster.include? this_system_cluster
-            # if empty remove and set skip_host to true
-            puts "  Hypervisor #{sys['name']} is in #{this_system_cluster} that isn't in an full cluster. Proced to removing subcription"
-            skip_host = true
-            # start subscription removing from hypervisor
-            begin
-              rem_sub_response = @api.resource(:host_subscriptions).call(:index, {:host_id => system['id']})
-              if @options[:debug]
-                puts "   DEBUG: Retrieved subscription data of #{system['name']}"
-                p rem_sub_response
-              end
-            rescue RestClient::NotFound
-              STDERR.puts "   ERROR: Hypervisor #{system['name']} subscription data not found. Skipping."
-              next
-            rescue Exception => e
-              puts "   ERROR: Unknow Error -- Unable to retrieve subscription data for hypervisor #{system['id']} #{system['name']}"
-              puts e.message
-              puts e.backtrace.inspect
-              puts e.response
-              exit 1
-            end
-            if rem_sub_response["total"].to_i > 0
-              puts "    Starting removing subscriptions from Hypervisor"
-              rem_sub_response["results"].each_with_index do |rem_sub, currentsub|
-                if @options[:verbose]
-                  puts "      VERBOSE: Removing subscription #{currentsub+1} / #{rem_sub_response["total"].to_i} - #{rem_sub['id']}"
-                end
-                if @options[:debug]
-                  puts "      DEBUG: Current subscription data"
-                  p rem_sub
-                end
-                begin
-                  # removing the subscription
-                  if not @options[:noop]
-                    @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => sys['id'], :subscriptions => [{:id => rem_sub['id']}]})
-                    puts "      Removed subscription #{rem_sub['id']} from hypervisor #{sys['name']} / #{sys['id']}"
-                  else
-                    puts "      [noop]: sub #{rem_sub['id']} would be removed from hypervisor #{sys['name']} / #{sys['id']}"
-                  end
-                rescue Exception => e
-                  puts "      ERROR: Unknow Error - Unable to remove subscription #{rem_sub["id"]} from #{sys["name"]}"
-                  puts e.message
-                  puts e.backtrace.inspect
-                  puts e.response
-                  exit 1
-                end
-              end
-            else
-              puts "    No subscription found attached to #{sys['name']}. Nothing to do."
-            end
-          else
-            puts "  Hypervisor #{sys['name']} is in #{this_system_cluster} that is a full cluster. Proced to subcription attaching"
-          end
-        end
-
-        if @options[:emptyhypervisor]
-          skip_host ||= !hypervisor_has_guests(sys)
-        end
-      end
-
-      derived_sub = {}
-      attachable_subs = []
-      # if system is a guest and density option is on, check if use_derived is true
-      if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST and @options[:density] and use_derived
-        # if so, fetch the stack-derived sub available for that host and replace the one in sub_parsing
-        if @options[:verbose]
-          puts "   VERBOSE: System #{system['name']} is a Guest and desire stack-derived sub, search for it"
-        end
-        subfiltertype = "STACK_DERIVED"
-        attached_sub_response = @api.resource(:host_subscriptions).call(:index, {:organization_id => @options[:org], :host_id => system['id']})
-        attached_sub_response['results'].each do |attached_sub|
-          if attached_sub['type'] == subfiltertype
-            if @options[:debug]
-              puts "    DEBUG: Sub #{attached_sub['cp_id']} is #{subfiltertype}"
-            end
-            has_derived_sub = true
-          end
-        end
-        begin
-          attachable_subs = fetch_all_results(:subscriptions,:index,{:available_for => "host", :host_id => system['id']})
-        rescue Exception => e
-          STDERR.puts "WARNING: Can't fetch available subscription for host #{system['name']} (#{system['id']}). Check on Satellite"
-          STDERR.puts e
-          break
-        end
-        # if the lookup has given no results at all, no subscriptions has to be added
-        if attachable_subs.empty?
-          puts "    Subscription parsing results of search string '#{subscription_item}' is empty, not adding any subscription"
-          next
-        end
-        if @options[:debug]
-          puts "  DEBUG: retrieved subscription"
-          p attachable_subs
-        end
-        # if empty, so zero results, this will be simply skipped
-        attachable_subs.each do |single_sub|
-          if @options[:debug]
-            puts "   DEBUG: subscription detail for subscription #{single_sub['cp_id']}:"
-            p single_sub
-          end
-          # check if sub isn't stack_derived
-          if single_sub['type'] != subfiltertype
-            if @options[:debug]
-              puts "   Skipping '#{single_sub['cp_id']}' as system type '#{single_sub['type']}' is different from desired '#{subfiltertype}'"
-            end
-            # if the filter do not match, skip to next subscription
-            next
-          end
-          # create product_id key in the derived_sub dictionary if product_id is not yet present in it
-          if not derived_sub.has_key?(single_sub['product_id'])
-            derived_sub[single_sub['product_id']] = []
-          end
-          derived_sub[single_sub['product_id']].push(single_sub['cp_id'])
-        end
-        if @options[:debug]
-          puts "      DEBUG: Subscription to attach at guest #{system['name']}"
-          p derived_sub
-        end
-        if derived_sub.empty?
-          if @options[:verbose]
-            puts "     VERBOSE: No sub available to be attached for #{system['name']}"
-          end
-        else
-          # set change sub to true will attach the derivated one from
-          has_derived_sub = true
-        end
-      end
-
-      # starting to get the correct number of socket to calculate the correct number of subscription to attach
-      if @options[:debug]
-        puts " DEBUG: Checking the number of socket for #{sys["name"]}"
-      end
-      # if the number of socket is setted, we can find the value from cpu::cpu_socket(s)
-      if sys.has_key?("facts") and sys["facts"].is_a?(Hash) and sys["facts"].has_key?("cpu::cpu_socket(s)")
-        # if the field is present check if it's a valid entry or not, if not exit with error
-        if sys["facts"]["cpu::cpu_socket(s)"].to_i > 0
-          # set sys_socket to the value of cpu::cpu_socket(s)
-          sys_socket = sys["facts"]["cpu::cpu_socket(s)"].to_i
-          if @options[:debug]
-            puts "   DEBUG: Setting sys_socket to #{sys_socket} for #{sys["name"]}"
-          end
-        else
-          puts "   FATAL ERROR: The number of socket for #{sys["name"]} it's equal or lower then 0."
-          exit 5
-        end
-      else
-        sys_socket = 1
-        if @options[:debug]
-          puts "   DEBUG: No cpu sockets entry found for #{sys['name']}, assigned 1 by default"
-        end
-      end
-
-      if @options[:debug]
-        puts " DEBUG: System '#{system['name']}' in scope, proceeding with assignment of variables"
-      end
-      # set the desidered subscription to be associated
-      sub_layer = sub['sub_layer'] || "stop_parsing"
-      if @options[:debug]
-        puts " DEBUG: Sub Layer of this sub entry: #{sub_layer}"
-      end
-      if sub.has_key?('sub_parsed')
-        if has_derived_sub
-          desired_sub_hash = KatelloAttachSubscription::Utils.merge_subs(desired_sub_hash, derived_sub, sub_layer)
-        else
-          desired_sub_hash = KatelloAttachSubscription::Utils.merge_subs(desired_sub_hash, sub['sub_parsed'], sub_layer)
-        end
-      end
-      # if "remove_other" has been set, set the flag
-      if sub.has_key?('remove_other')
-        remove_other = sub['remove_other']
-      end
-      # if "remove_subs" has been set, use it
-      if sub.has_key?('remove_subs')
-        remove_subs = sub['remove_subs']
-      end
-      # if "keep_subs" has been set, use it
-      if sub.has_key?('keep_subs')
-        keep_subs = sub['keep_subs']
-      end
-      # if "auto_attach" has been set, set the flag
-      if sub.has_key?('auto_attach')
-        auto_attach = sub['auto_attach']
-      end
-      # if "keep_virt_only" has been set, set the flag
-      if sub.has_key?('keep_virt_only')
-        keep_virt_only = sub['keep_virt_only']
-      end
-
-      # if the system is found and sub_layer is "stop_parsing", stop cyclyng over yaml
-      if sub_layer == "stop_parsing"
-        break
-      end
-
-    end
-    if skip_host
-      if @options[:verbose]
-        puts " VERBOSE: Skipping #{system['name']} as host doesn't need nothing more to do."
-      end
-      next
-    end
-    # check if one or more hosts need a subscription
-    if @options[:debug]
-      puts " DEBUG: desired_sub_hash value"
-      p desired_sub_hash
-    end
-
-    if desired_sub_hash or not remove_subs.empty?
-      # maybe we do not have any subs to add, but remove_subs was not empty
-      if not desired_sub_hash
-        desired_sub_hash = {'none' => []}
-      end
-
-      if @options[:debug]
-        puts " DEBUG: Checking subscription for #{system['name']} (#{system['id']})"
-      end
-      has_desired_sub_hash = {}
-      # for every product (hash key in yaml) check the desired subs
-      desired_sub_hash.each do |product, desidered_product_sub_array|
-        if @options[:debug]
-          puts "   DEBUG: in the desired_sub_hash #{desidered_product_sub_array}"
-        end
-        has_desired_sub = false
-        # check the current associated subscription to this system
-        begin
-          req = @api.resource(:host_subscriptions).call(:index, {:organization_id => @options[:org], :host_id => system['id'], :per_page => 100})
-        # in case of error adding the subscription, stop the process
-        rescue RestClient::ExceptionWithResponse => e
-          STDERR.puts "  WARNING: Subscription problem -- unable to retrieve subscription for host #{system['id']} #{system['name']}. Message: #{e.response}"
-        rescue Exception => e
-          puts "  ERROR: Unkown Error -- unable to retrieve subscription for host #{system['id']} #{system['name']}"
-          puts e.message
-          puts e.backtrace.inspect
-          puts e.response
-          exit 1
-        end
-
-        # check a single subscription in the array
-        req['results'].each do |sub|
-          # check if the found cp_id is in the list of the current product, if it is, our job here is done
-          if desidered_product_sub_array.include?(sub['cp_id'])
-            sockets_limit = 1
-            # get the sockets limit of the subscription and check if the quantity to attach is correct
-            if @options[:debug]
-              puts "  DEBUG: Checking socket limits of sub #{sub['id']}"
-            end
-            if sub.has_key?('sockets')
-              if sub['sockets'].to_i > 0
-                sockets_limit = sub['sockets'].to_i
-                if @options[:debug]
-                  puts "    DEBUG: Socket limit of sub #{sub['id']} is #{sub['sockets']}"
-                end
-              else
-                puts "FATAL ERROR: The Sockets Limit of subscription #{sub['id']} is not valid"
-                exit 5
-              end
-            else
-              if @options[:debug]
-                puts "    DEBUG: No subscription socket limit specification found. Setting 1 by default"
-              end
-              sockets_limit = 1
-            end
-            system_socket = sys_socket
-            # retrieving instance_multiplier from sub details
-            instance_multiplier = sub['instance_multiplier']
-
-            # if the host is a Virtual Guests the total_subscriptions to attach are fixed to 1
-            if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST
-              total_subscriptions = 1
-              if @options[:verbose]
-                puts "    VERBOSE: Host #{system['name']} is a guest, total subscriptions needed setted to 1"
-              end
-            else
-              # check if the host is physical and need to attach one of the sub present in the exception subscriptions list.
-              if system_type == KatelloAttachSubscription::FactAnalyzer::PHYSICAL and @exception_sub.include?(sub['name'])
-                # if so, sub is like RHEL Standard for Physical or Virtual nodes, that need instance_multiplier setted to 2
-                instance_multiplier = 2
-              end
-              total_subscriptions = instance_multiplier * (system_socket.to_f/sockets_limit.to_f).ceil
-            end
-            puts "  #{system['name']} need #{total_subscriptions} subscriptions for sub #{sub['id']}"
-            subscriptions_needed = total_subscriptions - sub['quantity_consumed'].to_i
-
-            if @options[:subreport] and not has_derived_sub
-              # count the sub to add, if not just present
-              if @options[:debug]
-                puts "      DEBUG: Current counted sub: #{sub_counted}"
-              end
-              # if not present, call addtototalsubneeded to add the count of subs
-              if not sub_counted.include?(sub['name'])
-                skip_report = true
-                addtototalsubneeded(system['name'], sub['name'], total_subscriptions)
-                # add to the subs counted
-                sub_counted.push(sub['name'])
-              else
-                # if just counted don't do nothing
-                if @options[:debug]
-                  puts "      DEBUG: Skipping count as sub #{sub['name']} is just present"
-                end
-              end
-            end
-            if not has_derived_sub
-              # check sub needed = 0
-              if subscriptions_needed == 0
-                puts "  subscription #{sub['cp_id']} for #{product} product is already attached to #{system['name']}"
-              else
-                # if subscriptions_needed != 0 then attached sub to the host consumed_quantity is < or > of the correct one.
-                if subscriptions_needed < 0
-                  puts "  WARNING: Subscription #{sub['id']} attached #{sub['quantity_consumed']} that is > of quantity needed: #{total_subscriptions}, sub would be removed and reattached"
-                else
-                  puts "  subscription #{sub['cp_id']} for #{product} product is attached to #{system['name']}, but still need to consume #{subscriptions_needed} token, sub would be removed and reattached"
-                end
-                # check if sub available sub are >= of the one needed as
-                # - if sub_needed > 0 then we need to see if (qty attached + qty to attach) < qty available
-                if sub['available'] >= subscriptions_needed
-                  # set subscriptions_needed to the total ones as current sub is to be removed and reattached consuming total_subscriptions sub.
-                  subscriptions_needed = total_subscriptions
-                  if not @options[:noop]
-                    puts "  removed #{sub['id']} - #{sub['cp_id']}"
-                    @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
-                    puts "  reattached #{sub['id']} - #{sub['cp_id']}"
-                    @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => subscriptions_needed}]})
-                  else
-                    puts "  [noop]: #{sub['id']} - #{sub['cp_id']} would be removed and reattached with correct quantity: #{subscriptions_needed}"
-                  end
-                else
-                  puts " Skipping fixing the subscription of #{sub['id']} for #{system['name']} because #{subscriptions_needed} requested but #{sub['available']} available"
-                end
-              end
-            end
-            has_desired_sub = true
-          # else, if this is not among the desired subscriptions (ALL of them, not only the current product)
-          # and remove_other is set, remove this subscription to the system
-          elsif sub['cp_id'] != nil and not desired_sub_hash.flatten(2).include?(sub['cp_id']) and (remove_other or remove_subs.include?(sub['cp_id'])) and not (keep_virt_only and sub.has_key?('virt_only') and sub['virt_only']) and not keep_subs.include?(sub['cp_id'])
-            puts "  removing subscription #{sub['cp_id']} from system #{system['name']}"
-            if not @options[:noop]
-              @api.resource(:host_subscriptions).call(:remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]})
-              puts "  removed"
-            else
-              puts "  [noop] removed"
-            end
-          end
-        end
-        # if all of the subscriptions marked for this product is missing, mark it to be added
-        if not desidered_product_sub_array.empty? and not has_desired_sub
-          puts "  Subscription on host #{system['name']} for product " + product.to_s + " currently missing. Set for the attach."
-          has_desired_sub_hash[product] = desidered_product_sub_array
-        end
-      end
-
-      if @options[:debug]
-        puts "  DEBUG: has_desired_sub_hash: #{has_desired_sub_hash}"
-      end
-
-      # if the system do not has proper subscritions, attach it
-      if has_desired_sub_hash
-        # cycle for each product
-        has_desired_sub_hash.each do |product, desired_subs_hash|
-          sub_attached = false
-          # cycle for each subscription
-          desired_subs_hash.each do |desired_sub|
-            if @options[:debug]
-              puts "  DEBUG: current subscription to be checked"
-              p desired_sub
-            end
-            # if subs[desired_sub] is false, retrieve the current subscription detail
-            begin
-              # this will retrieve the sub detail only once for each sub
-              subs[desired_sub] ||= @api.resource(:subscriptions).call(:index, {:search => "id=#{desired_sub}", :organization_id => @options[:org]})['results'][0]
-            # in case of error adding the subscription, stop the process
-            rescue Exception => e
-              puts "  ERROR: unable to retrieve subscription #{desired_sub}"
-              puts e.message
-              puts e.backtrace.inspect
-              exit 1
-            end
-            # Start checking the needed subscriptions for every hosts
-            if not has_derived_sub
-              system_socket = sys_socket
-              puts " Start calculating the correct number of subscriptions #{subs[desired_sub]['id']} needed for #{system['name']}"
-              # if field socket is present, the max sockets managed for every subscription is in sockets field
-              if subs[desired_sub].has_key?('sockets')
-                if subs[desired_sub]['sockets'].to_i > 0
-                  sub_socket = subs[desired_sub]['sockets'].to_i
-                  if @options[:debug]
-                    puts "    DEBUG: Subscription #{subs[desired_sub]['id']} limit of socket is #{sub_socket}"
-                  end
-                else
-                  puts "FATAL ERROR: The limit for the number of sockets of #{subs[desired_sub]['name']} (ID: #{subs[desired_sub]['id']}, CPID: #{subs[desired_sub]['cp_id']}) is invalid"
-                  exit 5
-                end
-              else
-              # if no subscription socket limit data is present use 1 by default
-                if @options[:debug]
-                  puts "    DEBUG: No subscription socket limit specification found. Setting 1 by default"
-                end
-              end
-              # calculate the correct number, eg: if system has 8 sockets but subs grant only 2 sockets, we need 4 subs
-              # ceiling data it's to prevent 0 subs needed if hosts has 1 socket but subs has 2 or more like sockets limit
-              if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST
-                desired_quantity = 1
-                if @options[:verbose]
-                  puts "    VERBOSE: Host #{system['name']} is a guest, desired_quantity for #{subs[desired_sub]['cp_id']} setted to 1"
-                end
-              else
-                # retrieving instance_multiplier from sub details
-                instance_multiplier = subs[desired_sub]['instance_multiplier']
-                # INSTANCE_MULTIPLIER WORKAROUND (BZ 1664614 - https://bugzilla.redhat.com/show_bug.cgi?id=1664614)
-                # full explanation of the bug and workaround in readme
-                # check if the host is physical and need to attach one of the sub present in the exception subscriptions list.
-                if system_type == KatelloAttachSubscription::FactAnalyzer::PHYSICAL and @exception_sub.include?(subs[desired_sub]['name'])
-                  # if so, sub is like RHEL Standard for Physical or Virtual nodes, that need instance_multiplier setted to 2
-                  instance_multiplier = 2
-                end
-                desired_quantity = instance_multiplier * (system_socket.to_f/sub_socket.to_f).ceil
-              end
-            else
-              if @options[:debug]
-                puts "    DEBUG: Host #{system['name']} has Stack_derived subs to be attached, desired quantity set to 0"
-              end
-              desired_quantity = 0
-            end
-            puts "   The number of subscriptions needed for #{desired_sub} (id: #{subs[desired_sub]['id']}) is of #{desired_quantity}"
-
-            # if there are not enough available subscriptions check the next available
-            if desired_quantity > subs[desired_sub]['available'].to_i and subs[desired_sub]['quantity'].to_i != -1
-              puts "   Cannot add subscription #{desired_sub} (id: #{subs[desired_sub]['id']}): only #{subs[desired_sub]['available']} available, but #{desired_quantity} requested"
-              next
-            end
-
-            if @options[:subreport] and not has_derived_sub
-              # count the sub to add, if not just present
-              if @options[:debug]
-                puts "      DEBUG: Current counted sub: #{sub_counted}"
-              end
-              # if not present, call addtototalsubneeded to add the count of subs
-              if not sub_counted.include?(subs[desired_sub]['name'])
-                skip_report = true
-                addtototalsubneeded(system['name'], subs[desired_sub]['name'], desired_quantity)
-                # add to the subs counted
-                sub_counted.push(subs[desired_sub]['name'])
-                sub_attached = true
-              else
-                # if just counted don't do nothing
-                if @options[:debug]
-                  puts "      DEBUG: Skipping count as sub #{subs[desired_sub]['name']} is just present"
-                end
-              end
-            end
-
-            # if requirements are met, add the subscription
-            puts "   adding #{desired_sub} for #{product} (id: #{subs[desired_sub]['id']})"
-
-            # fix the number of the available and consumed subscription because this will be retrieved only once
-            subs[desired_sub]['available'] -= desired_quantity
-            subs[desired_sub]['consumed'] += desired_quantity
-
-            if not @options[:noop]
-              begin
-                @api.resource(:host_subscriptions).call(:add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => subs[desired_sub]['id'], :quantity => desired_quantity}]})
-                puts "    Added #{desired_sub} for #{product} in system #{system['name']}"
-                # stop cycling over the subscription available since the first available has been added
-                break
-              # in case of error adding the subscription, stop the process
-              rescue RestClient::ExceptionWithResponse => e
-                STDERR.puts "  WARNING: Subscription problem -- unable to attach subscription for host #{system['id']} #{system['name']}. Message: #{e.response}"
-              rescue Exception => e
-                STDERR.puts "  ERROR: unable to attach subscription"
-                STDERR.puts e.message
-                STDERR.puts e.backtrace.inspect
-                exit 1
-              end
-            else
-              puts "    [noop] Added #{desired_sub} for #{product} in system #{system['name']}"
-              break
-            end
-          end
-
-          # if no sub attached but needed, add to the count that you need the first one
-          if @options[:subreport] and not has_derived_sub
-            if not sub_attached
-              # mark as missing the first desired_subs entry
-              sub_missing = desired_subs_hash.first
-              if @options[:verbose]
-                puts "    VERBOSE: #{system['name']} didn't attach any #{product} sub, set that need #{sub_missing}"
-              end
-              missing_hash = subs[sub_missing]
-              sub_socket = missing_hash['sockets']
-              if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST
-                desired_quantity = 1
-                if @options[:debug]
-                  puts "      DEBUG: #{system['name']} is a guest, desired_quantity setted to 1"
-                end
-              else
-                # retrieving instance_multiplier from sub details
-                instance_multiplier = missing_hash['instance_multiplier']
-                # INSTANCE_MULTIPLIER WORKAROUND (BZ 1664614 - https://bugzilla.redhat.com/show_bug.cgi?id=1664614)
-                # full explanation of the bug and workaround in readme
-                # check if the host is physical and the sub to attach isn't in the exception sub list.
-                if system_type == KatelloAttachSubscription::FactAnalyzer::PHYSICAL and @exception_sub.include?(missing_hash['name'])
-                  # if so, sub is like RHEL Standard for Physical or Virtual nodes, that need instance_multiplier setted to 2
-                  instance_multiplier = 2
-                end
-                desired_quantity = instance_multiplier * (sys_socket.to_f/sub_socket.to_f).ceil
-              end
-              if @options[:debug]
-                puts "      DEBUG: Added #{desired_quantity} of #{missing_hash['name']} (#{missing_hash['name']}) for #{system['name']}"
-              end
-              addtototalsubneeded(system['name'], missing_hash['name'], desired_quantity)
-              skip_report = true
-            end
-          end
-        end
-      end
-    end
-
-    # if auto-attach flag is set in YAML perform auto-attach for this hosts
-    if auto_attach
-      puts " auto-attaching subs to system #{system['name']}"
-      if not @options[:noop]
-        api.resource(:host_subscriptions).call(:auto_attach, {:host_id => system['id']})
-        if @options[:subreport]
-          # call function that get all the sub consumed and count only physical sub as stacked-derived are for unlimited guest
-          addspecialsubtocount(system)
-        end
-      else
-        puts " [noop] auto-attached"
-      end
-    end
-
+    assignsubs(system)
   end
 
   # writing report of consumed subs after attaching all subs to the system
@@ -1487,15 +845,621 @@ def vdcupdate()
 
   puts "Subscription attaching process ended."
   if not @options[:usecache]
+    cachefile = @options[:cachefile].to_s + "_org" + @options[:org].to_s
     # always write the cache file at the end, to be used in the future
     puts "Writing YAML file into cache file #{cachefile}"
-    File.open(cachefile, 'w') {|f| f.write(YAML.dump({'systems' => systems, 'system_details' => system_details, 'subs' => @yaml[:subs]})) }
+    File.open(cachefile, 'w') {|f| f.write(YAML.dump({'systems' => systems, 'subs' => @yaml[:subs]})) }
+  end
+end
+
+def assignsubs(system)
+  # initialize variable
+  req = nil
+  has_desired_sub = nil
+  desired_sub = nil
+  desired_sub_hash = nil
+  desired_type = @default_type
+  remove_other = true
+  remove_subs = []
+  keep_subs = []
+  auto_attach = false
+  keep_virt_only = false
+  virtual_host = nil
+  desired_quantity = 1
+  sys_socket = 1
+  hypervisor_found = false
+  system_type = ""
+  this_system_cluster = ""
+
+  skip_host = false
+  has_derived_sub = false
+
+  subs = {}
+  sys = nil
+  skip_report = false
+  sub_counted = []
+
+  # add to array system the name of the system itself taken from id
+  if @options[:verbose]
+   puts " VERBOSE: Start assigning subscriptions to #{system['name']}"
+  end
+  @checked_hosts.push(system['id'])
+
+  # get detail for the current system to be checked.
+  if @options[:debug]
+    puts " DEBUG: detail of the current system to be checked:"
+    p system
+  end
+
+  sys = apiCall(:hosts, :show, {:id => system['id'].to_i, :fields => 'full'}, false)
+  if @api_error
+    STDERR.puts "   ERROR: Host #{system['name']} full api data not found. Skipping."
+    return
+  end
+
+  if sys.count <= 0
+    puts "  WARNING: System name '#{system['name']}' not found. Is cache in use? Skipping."
+    return
+  end
+  # if host isn't registered by subscription manager for anyone reason, skip
+  if not sys.has_key?('subscription_facet_attributes')
+    if @options[:verbose]
+      puts "  VERBOSE: Skipping #{sys['name']} as it isn't registered with subscription manager"
+    end
+    return
+  end
+  if @options[:virtwho] and @virtwho_data
+    if @options[:verbose]
+      puts "VERBOSE: adding virt-who data to #{sys['name']}"
+    end
+    add_cluster_data(sys)
+  end
+  if @options[:debug]
+    puts "  DEBUG: '#{system['name']}' id #{system['id']} :hosts api data:"
+    p sys
+  end
+  # check if the type requested match the host one
+  system_type = KatelloAttachSubscription::FactAnalyzer.system_type(sys)
+  # for each item in yaml extract sub
+  if @options[:debug]
+    puts " DEBUG: YAML dump with all definitions for the current system"
+    p @yaml
+  end
+  @yaml[:subs].each do |sub|
+    # if "type" has been specified on yaml file check if match.
+    # the default is to check on "Hypervisor"
+    # if DO NOT match, skip to next sub
+    # fixme: can't find this detail in new API
+    if sub.has_key?('type')
+      unless KatelloAttachSubscription::HostMatcher.match_type(sub['type'], system_type)
+        if @options[:verbose]
+          puts "  VERBOSE: Skipping '#{system['name']}' as system type '#{system_type}' is different from desired '#{sub['type']}'"
+        end
+        next
+      end
+    end
+
+    skip_sub = true
+    # extract the (possible) virtual_host
+    if sub.has_key?('virtual_host')
+      virtualhostregex = Regexp.new(sub['virtual_host'])
+    else
+      virtualhostregex = nil
+    end
+    # test all the facts
+    if @options[:verbose]
+      puts "VERBOSE: Start testing facts value for #{sys['name']}"
+    end
+    fact_test_passed = KatelloAttachSubscription::HostMatcher.match_host(sys, sub)
+    unless fact_test_passed
+      if @options[:verbose]
+        puts "  VERBOSE: Host #{sys['name']} doesn't pass facts test. Skip to the next sub entry."
+      end
+      next
+    else
+      if @options[:verbose]
+        puts "  VERBOSE: Host #{sys['name']} pass fact test. Proceed to attach sub."
+      end
+    end
+
+    use_derived = false
+    # get the value of use_derived from the yaml sub entry, if setted
+    if sub.has_key?('use_derived')
+      use_derived = sub['use_derived']
+      if @options[:debug]
+        if use_derived
+          puts "  DEBUG: use_derived set to #{use_derived}"
+        end
+      end
+    end
+
+    if @options[:emptyhypervisor] and system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
+      skip_host ||= !hypervisor_has_guests(sys)
+    end
+
+    derived_sub = {}
+    attachable_subs = []
+    # if system is a guest and density option is on, check if use_derived is true
+    if system_type == KatelloAttachSubscription::FactAnalyzer::GUEST and use_derived
+      # if so, fetch the stack-derived sub available for that host and replace the one in sub_parsing
+      if @options[:verbose]
+        puts "   VERBOSE: System #{system['name']} is a Guest and desire stack-derived sub, search for it"
+      end
+      subfiltertype = "STACK_DERIVED"
+      attached_sub_response = apiCall(:host_subscriptions, :index, {:organization_id => @options[:org], :host_id => system['id']}, false)
+      if @api_error
+        puts "   ERROR: Unable to retrieve subscription data for host #{system['id']} #{system['name']}. Skipping to next host"
+        next
+      end
+      attached_sub_response['results'].each do |attached_sub|
+        if attached_sub['type'] == subfiltertype
+          if @options[:debug]
+            puts "    DEBUG: Sub #{attached_sub['cp_id']} is #{subfiltertype}"
+          end
+          has_derived_sub = true
+        end
+      end
+      begin
+        attachable_subs = fetch_all_results(:subscriptions,:index,{:available_for => "host", :host_id => system['id']})
+      rescue Exception => e
+        STDERR.puts "WARNING: Can't fetch available subscription for host #{system['name']} (#{system['id']}). Check on Satellite"
+        STDERR.puts e
+        break
+      end
+      # if the lookup has given no results at all, no subscriptions has to be added
+      if attachable_subs.empty?
+        puts "    Subscription parsing results of search string '#{subscription_item}' is empty, not adding any subscription"
+        next
+      end
+      if @options[:debug]
+        puts "  DEBUG: retrieved subscription"
+        p attachable_subs
+      end
+      # if empty, so zero results, this will be simply skipped
+      attachable_subs.each do |single_sub|
+        if @options[:debug]
+          puts "   DEBUG: subscription detail for subscription #{single_sub['cp_id']}:"
+          p single_sub
+        end
+        # check if sub isn't stack_derived
+        if single_sub['type'] != subfiltertype
+          if @options[:debug]
+            puts "   Skipping '#{single_sub['cp_id']}' as system type '#{single_sub['type']}' is different from desired '#{subfiltertype}'"
+          end
+          # if the filter do not match, skip to next subscription
+          next
+        end
+        # create product_id key in the derived_sub dictionary if product_id is not yet present in it
+        if not derived_sub.has_key?(single_sub['product_id'])
+          derived_sub[single_sub['product_id']] = []
+        end
+        derived_sub[single_sub['product_id']].push(single_sub['cp_id'])
+      end
+      if @options[:debug]
+        puts "      DEBUG: Subscription to attach at guest #{system['name']}"
+        p derived_sub
+      end
+      if derived_sub.empty?
+        if @options[:verbose]
+          puts "     VERBOSE: No sub available to be attached for #{system['name']}"
+        end
+      else
+        # set change sub to true will attach the derivated one from
+        has_derived_sub = true
+        # add the remaining product to attach searching for hypervisor in @desired_product
+        if sys['subscription_facet_attributes']['virtual_host']
+          guest_hypervisor = sys['subscription_facet_attributes']['virtual_host']['name']
+          if @options[:verbose]
+            puts "  VERBOSE: Adding product for #{sys['name']} that aren't derivable on #{guest_hypervisor}"
+          end
+          if @desired_product[guest_hypervisor]
+            derived_products = @desired_product[guest_hypervisor]
+            # sub['parsed_product']
+            sub['sub_parsed'].each do |product, parsed_product|
+              if derived_products.count(product) == 0
+                derived_sub[product] = parsed_product
+              end
+            end
+          else
+            if @options[:verbose]
+              puts "    VERBOSE: No non derivable product added for #{sys['name']}"
+            end
+          end
+        end
+      end
+      if @options[:debug]
+        puts "      DEBUG: Subscription to attach at guest #{system['name']}"
+        p derived_sub
+      end
+    end
+
+    # starting to get the correct number of socket to calculate the correct number of subscription to attach
+    if @options[:debug]
+      puts " DEBUG: Checking the number of socket for #{sys["name"]}"
+    end
+    # if the number of socket is setted, we can find the value from cpu::cpu_socket(s)
+    if sys.has_key?("facts") and sys["facts"].is_a?(Hash) and sys["facts"].has_key?("cpu::cpu_socket(s)")
+      # if the field is present check if it's a valid entry or not, if not exit with error
+      if sys["facts"]["cpu::cpu_socket(s)"].to_i > 0
+        # set sys_socket to the value of cpu::cpu_socket(s)
+        sys_socket = sys["facts"]["cpu::cpu_socket(s)"].to_i
+        if @options[:debug]
+          puts "   DEBUG: Setting sys_socket to #{sys_socket} for #{sys["name"]}"
+        end
+      else
+        puts "   FATAL ERROR: The number of socket for #{sys["name"]} it's equal or lower then 0."
+        exit 5
+      end
+    else
+      sys_socket = 1
+      if @options[:debug]
+        puts "   DEBUG: No cpu sockets entry found for #{sys['name']}, assigned 1 by default"
+      end
+    end
+
+    if @options[:debug]
+      puts " DEBUG: System '#{system['name']}' in scope, proceeding with assignment of variables"
+    end
+    # set the desidered subscription to be associated
+    sub_layer = sub['sub_layer'] || "stop_parsing"
+    if @options[:debug]
+      puts " DEBUG: Sub Layer of this sub entry: #{sub_layer}"
+    end
+    if sub.has_key?('sub_parsed')
+      if has_derived_sub
+        desired_sub_hash = KatelloAttachSubscription::Utils.merge_subs(desired_sub_hash, derived_sub, sub_layer)
+      else
+        desired_sub_hash = KatelloAttachSubscription::Utils.merge_subs(desired_sub_hash, sub['sub_parsed'], sub_layer)
+      end
+    end
+    # if "remove_other" has been set, set the flag
+    if sub.has_key?('remove_other')
+      remove_other = sub['remove_other']
+    end
+    # if "remove_subs" has been set, use it
+    if sub.has_key?('remove_subs')
+      remove_subs = sub['remove_subs']
+    end
+    # if "keep_subs" has been set, use it
+    if sub.has_key?('keep_subs')
+      keep_subs = sub['keep_subs']
+    end
+    # if "auto_attach" has been set, set the flag
+    if sub.has_key?('auto_attach')
+      auto_attach = sub['auto_attach']
+    end
+    # if "keep_virt_only" has been set, set the flag
+    if sub.has_key?('keep_virt_only')
+      keep_virt_only = sub['keep_virt_only']
+    end
+
+    # if the system is found and sub_layer is "stop_parsing", stop cyclyng over yaml
+    if sub_layer == "stop_parsing"
+      break
+    end
+
+  end
+  if skip_host
+    if @options[:verbose]
+      puts " VERBOSE: Skipping #{system['name']} as host doesn't need nothing more to do."
+    end
+    return
+  end
+  # check if one or more hosts need a subscription
+  if @options[:debug]
+    puts " DEBUG: desired_sub_hash value"
+    p desired_sub_hash
+  end
+
+  if system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
+    add_hypervisor_product(system['name'], desired_sub_hash)
+  end
+
+  if desired_sub_hash or not remove_subs.empty?
+    # maybe we do not have any subs to add, but remove_subs was not empty
+    if not desired_sub_hash
+      desired_sub_hash = {'none' => []}
+    end
+
+    if @options[:clean_sub]
+      cleanable_sub = apiCall(:host_subscriptions, :index, {:organization_id => @options[:org], :host_id => system['id'], :per_page => 100}, false )
+      clean_same_product(desired_sub_hash, cleanable_sub["results"], system, system_type, sys_socket)
+    end
+
+    if @options[:debug]
+      puts " DEBUG: Checking subscription for #{system['name']} (#{system['id']})"
+    end
+    has_desired_sub_hash = {}
+    # for every product (hash key in yaml) check the desired subs
+    desired_sub_hash.each do |product, desidered_product_sub_array|
+      if @options[:debug]
+        puts "   DEBUG: in the desired_sub_hash #{desidered_product_sub_array}"
+      end
+      has_desired_sub = false
+      # check the current associated subscription to this system
+      req = apiCall(:host_subscriptions, :index, {:organization_id => @options[:org], :host_id => system['id'], :per_page => 100}, false )
+      if @api_error
+        STDERR.puts "  WARNING: Subscription problem -- unable to retrieve subscription for host #{system['id']} #{system['name']}"
+        next
+      end
+      # check a single subscription in the array
+      req['results'].each do |sub|
+        # check if the found cp_id is in the list of the current product, if it is, our job here is done
+        if desidered_product_sub_array.include?(sub['cp_id'])
+          total_subscriptions = KatelloAttachSubscription::Utils.needed_entitlement(system_type, sys_socket, sub)
+          puts "  #{system['name']} need #{total_subscriptions} subscriptions for sub #{sub['id']}"
+          subscriptions_needed = total_subscriptions - sub['quantity_consumed'].to_i
+
+          if @options[:subreport] and not sub['type'] == "STACK_DERIVED"
+            # count the sub to add, if not just present
+            if @options[:debug]
+              puts "      DEBUG: Current counted sub: #{sub_counted}"
+            end
+            # if not present, call addtototalsubneeded to add the count of subs
+            if not sub_counted.include?(sub['name'])
+              skip_report = true
+              addtototalsubneeded(system['name'], sub['name'], total_subscriptions)
+              # add to the subs counted
+              sub_counted.push(sub['name'])
+            else
+              # if just counted don't do nothing
+              if @options[:debug]
+                puts "      DEBUG: Skipping count as sub #{sub['name']} is just present"
+              end
+            end
+          end
+          # if stack derived subs are to be attached skip the part of cleaning
+          if not has_derived_sub
+            # check sub needed = 0
+            if subscriptions_needed == 0
+              puts "  subscription #{sub['cp_id']} for #{product} product is already attached to #{system['name']}"
+            else
+              # if subscriptions_needed != 0 then attached sub to the host consumed_quantity is < or > of the correct one.
+              if subscriptions_needed < 0
+                puts "  WARNING: Subscription #{sub['id']} attached #{sub['quantity_consumed']} that is > of quantity needed: #{total_subscriptions}, sub would be removed and reattached"
+              else
+                puts "  subscription #{sub['cp_id']} for #{product} product is attached to #{system['name']}, but still need to consume #{subscriptions_needed} token, sub would be removed and reattached"
+              end
+              # check if sub available sub are >= of the one needed as
+              # - if sub_needed > 0 then we need to see if (qty attached + qty to attach) < qty available
+              if sub['available'] >= subscriptions_needed
+                # set subscriptions_needed to the total ones as current sub is to be removed and reattached consuming total_subscriptions sub.
+                subscriptions_needed = total_subscriptions
+                if not @options[:noop]
+                  puts "  removed #{sub['id']} - #{sub['cp_id']}"
+                  apiCall(:host_subscriptions, :remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]}, false)
+                  if @api_error
+                    STDERR.puts "WARNING: Unable to remove subscription #{sub['id']} from #{system['name']} - ID: #{system['id']}"
+                  end
+                  puts "  reattached #{sub['id']} - #{sub['cp_id']}"
+                  apiCall(:host_subscriptions, :add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id'], :quantity => subscriptions_needed}]}, false)
+                  if @api_error
+                    STDERR.puts "WARNING: Unable to attach subscription #{sub['id']} to #{system['name']} - ID: #{system['id']}"
+                  end
+                else
+                  puts "  [noop]: #{sub['id']} - #{sub['cp_id']} would be removed and reattached with correct quantity: #{subscriptions_needed}"
+                end
+              else
+                puts " Skipping fixing the subscription of #{sub['id']} for #{system['name']} because #{subscriptions_needed} requested but #{sub['available']} available"
+              end
+            end
+          end
+          has_desired_sub = true
+        # else, if this is not among the desired subscriptions (ALL of them, not only the current product)
+        # and remove_other is set, remove this subscription to the system
+        elsif sub['cp_id'] != nil and not desired_sub_hash.flatten(2).include?(sub['cp_id']) and (remove_other or remove_subs.include?(sub['cp_id'])) and not (keep_virt_only and sub.has_key?('virt_only') and sub['virt_only']) and not keep_subs.include?(sub['cp_id']) and sub['type'] != "STACK_DERIVED"
+          puts "  removing subscription #{sub['cp_id']} from system #{system['name']}"
+          if not @options[:noop]
+            apiCall(:host_subscriptions, :remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => sub['id']}]}, false)
+            if @api_error
+              STERR.puts "WARNING: Unable to remove subscription #{sub['id']} from #{system['name']} - ID: #{system['id']}"
+            else
+              puts "  removed"
+            end
+          else
+            puts "  [noop] removed"
+          end
+        end
+      end
+      # if all of the subscriptions marked for this product is missing, mark it to be added
+      if not desidered_product_sub_array.empty? and not has_desired_sub
+        puts "  Subscription on host #{system['name']} for product " + product.to_s + " currently missing. Set for the attach."
+        has_desired_sub_hash[product] = desidered_product_sub_array
+      end
+    end
+
+    if @options[:debug]
+      puts "  DEBUG: has_desired_sub_hash: #{has_desired_sub_hash}"
+    end
+
+    # if the system do not has proper subscritions, attach it
+    if has_desired_sub_hash
+      # cycle for each product
+      has_desired_sub_hash.each do |product, desired_subs_hash|
+        sub_attached = false
+        # cycle for each subscription
+        desired_subs_hash.each do |desired_sub|
+          if @options[:debug]
+            puts "  DEBUG: current subscription to be checked"
+            p desired_sub
+          end
+          # if subs[desired_sub] is false, retrieve the current subscription detail
+          subs[desired_sub] ||= apiCall(:subscriptions, :index, {:search => "id=#{desired_sub}", :organization_id => @options[:org]}, false)['results'][0]
+          if @api_error
+            STDERR.puts "  ERROR: Unable to retrive subscription for #{desired_sub}"
+          end
+
+          desired_quantity = KatelloAttachSubscription::Utils.needed_entitlement(system_type, sys_socket, subs[desired_sub])
+          puts "   The number of subscriptions needed for #{desired_sub} (id: #{subs[desired_sub]['id']}) is of #{desired_quantity}"
+
+          # if there are not enough available subscriptions check the next available
+          if desired_quantity > subs[desired_sub]['available'].to_i and subs[desired_sub]['quantity'].to_i != -1
+            puts "   Cannot add subscription #{desired_sub} (id: #{subs[desired_sub]['id']}): only #{subs[desired_sub]['available']} available, but #{desired_quantity} requested"
+            next
+          end
+
+          if @options[:subreport] and not desired_quantity == 0
+            # count the sub to add, if not just present
+            if @options[:debug]
+              puts "      DEBUG: Current counted sub: #{sub_counted}"
+            end
+            # if not present, call addtototalsubneeded to add the count of subs
+            if not sub_counted.include?(subs[desired_sub]['name'])
+              skip_report = true
+              addtototalsubneeded(system['name'], subs[desired_sub]['name'], desired_quantity)
+              # add to the subs counted
+              sub_counted.push(subs[desired_sub]['name'])
+              sub_attached = true
+            else
+              # if just counted don't do nothing
+              if @options[:debug]
+                puts "      DEBUG: Skipping count as sub #{subs[desired_sub]['name']} is just present"
+              end
+            end
+          end
+
+          # if requirements are met, add the subscription
+          puts "   adding #{desired_sub} for #{product} (id: #{subs[desired_sub]['id']})"
+
+          # fix the number of the available and consumed subscription because this will be retrieved only once
+          subs[desired_sub]['available'] -= desired_quantity
+          subs[desired_sub]['consumed'] += desired_quantity
+
+          if not @options[:noop]
+            apiCall(:host_subscriptions, :add_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => subs[desired_sub]['id'], :quantity => desired_quantity}]}, false)
+            if @api_error
+              STDERR.puts "  WARNING: Subscription problem -- unable to attach subscription for host #{system['id']} #{system['name']}"
+            else
+              puts "    Added #{desired_sub} for #{product} in system #{system['name']}"
+              break
+            end
+          else
+            puts "    [noop] Added #{desired_sub} for #{product} in system #{system['name']}"
+            break
+          end
+        end
+
+        # if no sub attached but needed, add to the count that you need the first one
+        if @options[:subreport] and not desired_quantity == 0
+          if not sub_attached
+            # mark as missing the first desired_subs entry
+            sub_missing = desired_subs_hash.first
+            if @options[:verbose]
+              puts "    VERBOSE: #{system['name']} didn't attach any #{product} sub, set that need #{sub_missing}"
+            end
+            missing_hash = subs[sub_missing]
+            sub_socket = missing_hash['sockets']
+            desired_quantity = KatelloAttachSubscription::Utils.needed_entitlement(system_type, sys_socket, missing_hash)
+            if @options[:debug]
+              puts "      DEBUG: Added #{desired_quantity} of #{missing_hash['name']} (#{missing_hash['name']}) for #{system['name']}"
+            end
+            addtototalsubneeded(system['name'], missing_hash['name'], desired_quantity)
+            skip_report = true
+          end
+        end
+      end
+    end
+  end
+
+  # if auto-attach flag is set in YAML perform auto-attach for this hosts
+  if auto_attach
+    puts " auto-attaching subs to system #{system['name']}"
+    if not @options[:noop]
+      api.resource(:host_subscriptions).call(:auto_attach, {:host_id => system['id']})
+      if @options[:subreport]
+        # call function that get all the sub consumed and count only physical sub as stacked-derived are for unlimited guest
+        addspecialsubtocount(system)
+      end
+    else
+      puts " [noop] auto-attached"
+    end
+  end
+
+  if system_type == KatelloAttachSubscription::FactAnalyzer::HYPERVISOR
+    subscribe_guest(system['name'])
+  end
+end
+
+# add to the dictionary of requested product the product to be removed because derived
+def add_hypervisor_product(hypervisor_name, requested_sub)
+ if @desired_product.has_key?(hypervisor_name)
+   return
+ end
+ if @options[:verbose]
+   puts "  VERBOSE: Adding desired product for hypevisor #{hypervisor_name}"
+ end
+ if requested_sub and requested_sub.count > 0
+   @desired_product[hypervisor_name] = []
+   requested_sub.each do |product, product_sub_array|
+     @desired_product[hypervisor_name].push(product)
+   end
+   if @options[:debug]
+     puts "    DEBUG: Product added for #{hypervisor_name}"
+     p @desired_product[hypervisor_name]
+   end
+ else
+   if @options[:verbose]
+     puts "  VERBOSE: No product to be add on hypervisor list"
+   end
+ end
+end
+
+# subscribe guest after hypervisor update, still wip as to implement new use_derived function
+def subscribe_guest(hypervisor_name)
+  search_options = "hypervisor_host=#{hypervisor_name}"
+  hypervisor_guests = fetch_all_results(:hosts, :index, :search => search_options)
+  if hypervisor_guests.count > 0
+    if @options[:verbose]
+      puts "VERBOSE: Hypervisor has #{hypervisor_guests.count} guests. Subscribing it."
+    end
+    hypervisor_guests.each do |hyp_guest|
+      if @options[:verbose]
+        puts "  VERBOSE: Assigning subscriptions to #{hyp_guest['name']}"
+      end
+      assignsubs(hyp_guest)
+    end
+  end
+end
+
+# add additional data from cluster retrieved by --check-density and --virt-who options
+def add_cluster_data(sys)
+  # add virt-who data to hypervisor
+  sys = KatelloAttachSubscription::VirtWhoHelper.merge_system_virtwho(sys, @parsed_hypervisors_hash, @options[:org])
+  # add calculated cluster data from --check-density options
+  this_system_cluster = 'nil'
+  if @options[:density]
+    # retrieve cluster name of the hypervisor
+    if sys.has_key?('facts') and sys['facts'].has_key?('hypervisor::cluster')
+      this_system_cluster = sys['facts']['hypervisor::cluster']
+    end
+    if this_system_cluster == 'nil'
+      sys['facts'] ||= {}
+      sys['facts']['hypervisor::cluster'] = this_system_cluster
+    end
+    if @options[:debug]
+      puts "   DEBUG: system cluster: #{this_system_cluster}"
+    end
+    if this_system_cluster != "nil" and this_system_cluster != "none"
+      cluster_index = @cluster_data.index{|scluster| scluster['cluster_name'] == sys['facts']['hypervisor::cluster']}
+      if cluster_index
+        cluster_data = @cluster_data[cluster_index]
+        cluster_data.each do |key, value|
+          sys['facts'] ||= {}
+          key_name = "cluster_data::#{key}"
+          sys['facts'][key_name] = value
+        end
+        if @options[:debug]
+          puts "  DEBUG: All facts after cluster_data facts addition"
+          p sys['facts']
+        end
+      end
+    end
   end
 end
 
 
-# collect in @guest_list every guest with its host and cluster that would be print in a csv
-def collectguestdata(hypervisor_hash)
+# collect in @guest_list every guest with its host and cluster that would be print in :guestreportfile
+def collectguestdata(hypervisor_hash, guests_list)
   # if has guest start report, if not report as no guest are present for passed hypervisor
   if hypervisor_hash['subscription_facet_attributes']['virtual_guests'].count > 0
     if @options[:verbose]
@@ -1503,11 +1467,17 @@ def collectguestdata(hypervisor_hash)
     end
     # loop all the guest
     hypervisor_hash['subscription_facet_attributes']['virtual_guests'].each do |guest_data|
+      # get os of the guest
+      guest_position=guests_list.index{|sguest| sguest['name'] == guest_data['name']}
+      if guest_position
+        guest_os=guests_list[guest_position]['operatingsystem_name']
+      end
       # create hash for every guest with name, hypervisor name and hypervisor cluster
       guest_hash = {}
       guest_hash['name'] = guest_data['name']
       guest_hash['host'] = hypervisor_hash['name']
       guest_hash['cluster'] = hypervisor_hash['facts']['hypervisor::cluster']
+      guest_hash['operating_system'] = guest_os
       @guest_list.push(guest_hash)
     end
   else
@@ -1519,20 +1489,21 @@ def collectguestdata(hypervisor_hash)
     guest_hash['name'] = "No Guest"
     guest_hash['host'] = hypervisor_hash['name']
     guest_hash['cluster'] = hypervisor_hash['facts']['hypervisor::cluster']
+    guest_hash['operating_system'] = ""
     @guest_list.push(guest_hash)
   end
 end
 
-# print the csv file that report every vm with their detail
+# print in :guestreportfile the report for every record contained in @guest_list which contain hosts and cluster data for a virtual guests
 def printguestreport()
   if @options[:verbose]
     puts "    VERBOSE: Printing guest report in #{@options[:guestreportfile]}"
   end
   CSV.open(@options[:guestreportfile], "wb", {:col_sep => ";"}) do |csv|
     # header of csv
-    csv << ["Guest Name","Host Name","Cluster Name"]
+    csv << ["Guest Name","Host Name","Cluster Name", "Operative System"]
     @guest_list.each do |guest_data|
-      csv << [guest_data['name'], guest_data['host'], guest_data['cluster']]
+      csv << [guest_data['name'], guest_data['host'], guest_data['cluster'], guest_data['operating_system']]
     end
   end
 end
@@ -1558,6 +1529,47 @@ def hypervisor_has_guests(hostdata)
     has_guests = false
   end
   return has_guests
+end
+
+# clean attached subs of the same products from a content-hosts
+def clean_same_product (desired_sub_hash, host_subscriptions, host, host_type, host_socket)
+  desired_sub_hash.each do |product, desired_product_sub_array|
+    puts "Start checking if there are multiple #{product} subscriptions attached to #{host["name"]}"
+    remove_subscription = []
+    fit_subscription = nil
+    host_subscriptions.each do |single_sub|
+      # puts "DEBUGGONE DESIRED_SUB: #{desired_product_sub_array} - CP_ID: #{single_sub["cp_id"]}"
+      sub_count = desired_product_sub_array.count(single_sub["cp_id"]).to_i
+      if single_sub["type"] == "STACK_DERIVED" or sub_count <= 0
+        next
+      end
+      if not fit_subscription
+        needed_entitlement = KatelloAttachSubscription::Utils.needed_entitlement(host_type, host_socket, single_sub)
+        attached_entitlement = single_sub["quantity_consumed"]
+        if needed_entitlement >= attached_entitlement
+          fit_subscription = single_sub["cp_id"]
+        else
+          remove_subscription.push(single_sub["id"])
+        end
+      else
+        remove_subscription.push(single_sub["id"])
+      end
+    end
+    puts "#{product} subscriptions that will be removed"
+    p remove_subscription
+    remove_subscription.each do |subscription|
+      if not @options[:noop]
+        apiCall(:host_subscriptions, :remove_subscriptions, {:host_id => host['id'], :subscriptions => [{:id => subscription}]}, false )
+        if not @api_error
+          puts "  removed subscription ID #{subscription}"
+        else
+          puts "  WARNING: Problem removing subscription ID #{subscription} from host #{host['name']} - ID #{host['id']}"
+        end
+      else
+        puts "  [noop] removed subscriptions ID #{subscription}"
+      end
+    end
+  end
 end
 
 # add the value of sub passed in sub_quantity to the sub passed in sub_name in subs_count hash
@@ -1607,7 +1619,7 @@ def printsubsreport()
       sub_hash = getsubdetailfor(sub_name)
       count_state = "OK"
       instance_multiplier = 1
-      if @exception_sub.include?(sub_name)
+      if KatelloAttachSubscription::Utils::EXCEPTION_SUB.include?(sub_name)
         instance_multiplier = 2
       end
       sub_count = (sub_count.to_f/instance_multiplier.to_f).ceil
@@ -1622,14 +1634,7 @@ def printsubsreport()
   end
   CSV.open(@options[:detailedsubreportfile], "wb", {:col_sep => ";"}) do |csv|
     # header of csv
-    csv << ["Server Name", "Expected Subscription", "Expected Quantity", "Type"]
-    @detailed_report.each do |sub_entry|
-      csv << [sub_entry["hostname"], sub_entry["subname"], sub_entry["quantity"], sub_entry["type"]]
-    end
-  end
-  CSV.open(@options[:detailedsubreportfile], "wb", {:col_sep => ";"}) do |csv|
-    # header of csv
-    csv << ["Server Name", "Expected Subscription", "Expected Quantity"]
+    csv << ["Server Name", "Expected Subscription", "Expected Entitlement Quantity", "Type"]
     @detailed_report.each do |sub_entry|
       csv << [sub_entry["hostname"], sub_entry["subname"], sub_entry["quantity"], sub_entry["type"]]
     end
@@ -1642,11 +1647,9 @@ def addspecialsubtocount(system)
   system_id = system['id']
   attached_subscriptions = []
   # retrieve all the subscription attached
-  begin
-    response = @api.resource(:host_subscriptions).call(:index, {:host_id => system_id})
-  rescue Exception => e
+  response = apiCall(:host_subscriptions, :index, {:host_id => system_id}, false)
+  if @api_error
     puts "   ERROR: Unknow Error -- Unable to retrieve subscription details for hypervisor #{system_id}"
-    exit 1
   end
   # check if data found (API return data successfully)
   if not response.has_key?("total")
@@ -1764,6 +1767,38 @@ def getavailablesubfor(parsed_subscription)
   return available_subs
 end
 
+# fetch all the hosts reading from the yaml configuration file, if present
+def fetch_all_systems
+  systems = []
+  cachefile = @options[:cachefile].to_s + "_org" + @options[:org].to_s
+  if @options[:usecache]
+    puts "Starting host collection from cache. Please be patient."
+    cachefile = "#{@options[:cachefile]}_org#{@options[:org]}"
+    systems = readfromcache(cachefile, 'systems')
+  else
+    # no cache wanted
+    puts "Starting host collection from API. Please be patient."
+    # first of all, search for hypervisor as we would like to subscribe in order hypervisors, physicals and guests
+    # Currently there is a BZ opened as is not possible to absolute search hypervisor, physical and guest (BZ1635861)
+    if @options[:multisearch]
+      search_data = @yaml[:search]
+      search_data.each do |search_data|
+        search_options = search_data
+        puts "Searching for Hosts that match #{search_options}"
+        systems.concat(fetch_all_results(:hosts, :index, {:search => search_options}))
+      end
+    else
+      search_options = ""
+      puts "Searching for all Hosts in the environment"
+      systems = fetch_all_results(:hosts, :index, {:search => search_options})
+    end
+    hosts_count = systems.count
+    puts "Completed hosts collection."
+    puts "Hosts entry: #{hosts_count}"
+  end
+  return systems
+end
+
 # call api function to retrieve the list of object passed in resource
 def fetch_all_results(resource, action, params)
   page = 0
@@ -1774,11 +1809,65 @@ def fetch_all_results(resource, action, params)
     page += 1
     # get 100 results
     params.merge!({:organization_id => @options[:org], :page => page, :per_page => 100})
-    req = @api.resource(resource).call(action, params)
+    req = apiCall(resource, action, params, true)
     # concatenate output - all of the results
     results.concat(req['results'])
   end
   return results
+end
+
+# perform an api call checking for error and retry if setted
+def apiCall(resource, action, params, exiting)
+  if not @options[:repeatAPI]
+    @options[:maxstep] = 1
+  end
+  @api_error = true
+  current_step = 0
+  exceptions_list = []
+  results = {}
+  step = 0
+  while @api_error and step <= @options[:maxstep]
+    begin
+      results = @api.resource(resource).call(action, params)
+      @api_error = false
+    rescue RestClient::ExceptionWithResponse => exception
+      @api_error = true
+      step = step + 1
+      exceptions_list.push({"time"=> Time.now, "step" => step, "message" => exception.message, "response" => exception.response })
+      if @options[:debug]
+        puts "DEBUG: API #{resource} / #{action} failes for the #{step} time(s)."
+      end
+      if @options[:sleepAPI]
+        waiting_time = @options[:sleepTime] * ( @options[:sleepMult].to_f ** (step - 1) )
+        if @options[:debug]
+          puts "  DEBUG: waiting #{waiting_time} to repeat API call"
+        end
+        sleep(waiting_time)
+      end
+    end
+  end
+  if @options[:debug] and exceptions_list.count > 0
+    apiCallPrintError(resource, action, params, step, exceptions_list)
+  end
+  if step >= @options[:maxstep] and exiting
+    puts "Exiting from program"
+    exit 1
+  end
+  return results
+end
+
+# print the error of the API call if present
+def apiCallPrintError(resource, action, params, step, exceptions_list)
+  STDERR.puts "###"
+  STDERR.puts "ERROR: API Call failed for #{step} time(s). See error log:"
+  STDERR.puts "API #{resource} / #{action} with this parameters"
+  STDERR.puts params
+  exceptions_list.each do |single_exception|
+    STDERR.puts "---"
+    STDERR.puts "FAIL ##{single_exception["step"].to_i}: #{single_exception["time"]} - #{single_exception["message"]}"
+    STDERR.puts "#{single_exception["response"]}"
+  end
+  STDERR.puts "###"
 end
 
 # read the cache searching for key in file, if cachekey isn't setted read as json cachefile
@@ -1826,4 +1915,4 @@ def readfromJSONcache(jsoncachefile)
 end
 
 checksubs
-vdcupdate
+subsupdate
