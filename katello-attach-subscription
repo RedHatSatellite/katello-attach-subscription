@@ -762,43 +762,7 @@ def checksubs()
           next
         end
         # if no guests present, retrieve all subscription data from that hypervisor
-        rem_sub_response = apiCall(:host_subscriptions, :index, {:host_id => system['id']}, false)
-        if @api_error
-          STDERR.puts "   ERROR: Hypervisor #{system['name']} subscription data not found. Skipping."
-          next
-        end
-        # check if data found (API return data successfully)
-        if not rem_sub_response.has_key?("total")
-          if @options[:verbose]
-            puts "    VERBOSE: Skipping Hypervisor as not valid data was retrieved from API"
-          end
-          next
-        end
-        # check if total > 0, then loop the result to remove the subscriptions
-        if rem_sub_response["total"].to_i > 0
-          puts "    Starting removing subscriptions from Hypervisor"
-          rem_sub_response["results"].each_with_index do |rem_sub, currentsub|
-            if @options[:verbose]
-              puts "      VERBOSE: Removing subscription #{currentsub+1} / #{rem_sub_response["total"].to_i} - #{rem_sub['id']}"
-            end
-            if @options[:debug]
-              puts "      DEBUG: Current subscription data"
-              p rem_sub
-            end
-            if not @options[:noop]
-              apiCall(:host_subscriptions, :remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => rem_sub['id']}]}, false )
-              if @api_error
-                puts "      Can't remove subscription #{rem_sub['id']} from hypervisor #{system['name']} / #{system['id']}. Skipping"
-                next
-              end
-              puts "      Removed subscription #{rem_sub['id']} from hypervisor #{system['name']} / #{system['id']}"
-            else
-              puts "      [noop]: sub #{rem_sub['id']} would be removed from hypervisor #{system['name']} / #{system['id']}"
-            end
-          end
-        else
-          puts "    No subscription found attached to #{system['name']}. Nothing to do."
-        end
+        remove_all_subs(system)
       end
     else
       if @options[:verbose]
@@ -1359,6 +1323,11 @@ def assignsubs(system)
         end
       end
     end
+  else
+    if @options[:clean_sub]
+      puts "Server #{system['name']} have no subscription to be attached from parsing. Removing all of them"
+      remove_all_subs(system)
+    end
   end
 
   # if auto-attach flag is set in YAML perform auto-attach for this hosts
@@ -1417,6 +1386,35 @@ def subscribe_guest(hypervisor_name)
         puts "  VERBOSE: Assigning subscriptions to #{hyp_guest['name']}"
       end
       assignsubs(hyp_guest)
+    end
+  end
+end
+
+# remove all the subscriptions from a system
+def remove_all_subs(system)
+  attached_sub = apiCall(:host_subscriptions, :index, {:organization_id => @options[:org], :host_id => system['id'], }, false)
+  if @api_error
+    if @options[:verbsoe]
+      puts "VERBOSE: Can't retrieve subscriptions for #{system['id']}. Skipping removal of subs."
+    end
+    return
+  end
+  if attached_sub.count <= 0
+    if @options[:verbose]
+      puts "VERBOSE: No subscriptions attached to #{system['name']}. Nothing to remove."
+    end
+    return
+  end
+  attached_sub['results'].each do |subscription|
+    if not @options[:noop]
+      apiCall(:host_subscriptions, :remove_subscriptions, {:host_id => system['id'], :subscriptions => [{:id => subscription['id']}]}, false )
+      if not @api_error
+        puts "  removed subscription ID #{subscription['id']}"
+      else
+        puts "  WARNING: Problem removing subscription ID #{subscription['id']} from host #{system['name']} - ID #{system['id']}"
+      end
+    else
+      puts "  [noop] removed subscriptions ID #{subscription['id']}"
     end
   end
 end
