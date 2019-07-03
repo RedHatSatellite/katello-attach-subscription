@@ -23,12 +23,12 @@ module KatelloAttachSubscription
     end
 
     def self.system_type_from_host(host)
-      subsciption_facet = host['subscription_facet_attributes']
-      if subsciption_facet
-        if not subsciption_facet['virtual_guests'].empty?
+      subscription_facet = host['subscription_facet_attributes']
+      if subscription_facet
+        if not subscription_facet['virtual_guests'].empty?
           return HYPERVISOR
         end
-        if subsciption_facet['virtual_host']
+        if subscription_facet['virtual_host']
           return GUEST
         end
       end
