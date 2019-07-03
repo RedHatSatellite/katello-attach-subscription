@@ -672,7 +672,7 @@ def checksubs()
         # check if almost 1 virtual_guest is present on subscription_facet_attributes
         # if system["subscription_facet_attributes"]["virtual_guests"].count > 0
         if hypervisor_has_guests(system)
-          # if present skip, we must remove subscritions only from empty hypervisor
+          # if present skip, we must remove subscriptions only from empty hypervisor
           if @options[:verbose]
             puts "   VERBOSE: Skipping #{system["name"]} as virtual guest count is #{system["subscription_facet_attributes"]["virtual_guests"].count}"
           end
@@ -1301,7 +1301,7 @@ def vdcupdate()
         puts "  DEBUG: has_desired_sub_hash: #{has_desired_sub_hash}"
       end
 
-      # if the system do not has proper subscritions, attach it
+      # if the system do not has proper subscriptions, attach it
       if has_desired_sub_hash
         # cycle for each product
         has_desired_sub_hash.each do |product, desired_subs_hash|
