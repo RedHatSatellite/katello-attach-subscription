@@ -1080,12 +1080,14 @@ def vdcupdate()
       if @options[:debug]
         puts " DEBUG: Checking the number of socket for #{sys["name"]}"
       end
+      # get the facts for the current host from a api call to fact_values
+      facts = @api.resource(:fact_values).action(:index).call(:organization_id => 1, :per_page => 100000, :search => "host = #{sys['name']}")
       # if the number of socket is setted, we can find the value from cpu::cpu_socket(s)
-      if sys.has_key?("facts") and sys["facts"].is_a?(Hash) and sys["facts"].has_key?("cpu::cpu_socket(s)")
+      if facts.has_key?('results') and facts['results'].is_a?(Hash) and facts['results'].has_key?(sys['name']) and facts['results'][sys['name']].is_a?(Hash) and facts['results'][sys['name']].has_key?("cpu::cpu_socket(s)")
         # if the field is present check if it's a valid entry or not, if not exit with error
-        if sys["facts"]["cpu::cpu_socket(s)"].to_i > 0
+        if facts['results'][sys['name']]['cpu::cpu_socket(s)'].to_i > 0
           # set sys_socket to the value of cpu::cpu_socket(s)
-          sys_socket = sys["facts"]["cpu::cpu_socket(s)"].to_i
+          sys_socket = facts['results'][sys['name']]['cpu::cpu_socket(s)'].to_i
           if @options[:debug]
             puts "   DEBUG: Setting sys_socket to #{sys_socket} for #{sys["name"]}"
           end
