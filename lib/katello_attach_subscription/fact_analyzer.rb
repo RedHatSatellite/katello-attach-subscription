@@ -7,6 +7,8 @@ module KatelloAttachSubscription
     UNKNOWN = 'Unknown'.freeze
 
     def self.system_type_from_facts(facts)
+      return unless facts.is_a?(Hash)
+
       if (not facts['virt::host_type'].nil? and facts['virt::host_type'] != 'Not Applicable') or
           (facts['virt::is_guest'] and facts['virt::is_guest'].to_s.downcase != 'false') or
           facts['virt::uuid']
