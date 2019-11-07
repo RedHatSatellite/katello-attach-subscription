@@ -90,7 +90,7 @@ The following permissions are required to run `katello-attach-subscription`:
 | Fact Value | view_facts|
 | Host | view_hosts, edit_hosts|
 | Subscription | view_subscriptions, attach_subscriptions, unattach_subscriptions|
-
+| Organization | view_organizations|
 
 ## Caveats
 
